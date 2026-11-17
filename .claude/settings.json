@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git worktree list:*)",
+      "Bash(terraform fmt:*)",
+      "Bash(terraform -chdir=* fmt:*)",
+      "Bash(terraform validate:*)",
+      "Bash(terraform -chdir=* validate:*)",
+      "Bash(terraform init -backend=false:*)",
+      "Bash(terraform -chdir=* init -backend=false:*)",
+      "Bash(terraform plan:*)",
+      "Bash(terraform -chdir=* plan:*)",
+      "Bash(terraform show:*)",
+      "Bash(terraform -chdir=* show:*)",
+      "Bash(terraform output:*)",
+      "Bash(tflint:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv run ruff:*)",
+      "Bash(uv sync:*)",
+      "Bash(npm --prefix app/web run lint:*)",
+      "Bash(npm --prefix app/web run test:*)",
+      "Bash(npm --prefix app/web run build:*)",
+      "Bash(helm lint:*)",
+      "Bash(helm template:*)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl describe:*)",
+      "Bash(kubectl logs:*)",
+      "Bash(kubectl top:*)",
+      "Bash(kubectl apply --dry-run=client:*)",
+      "Bash(az account show:*)",
+      "Bash(az account list:*)",
+      "Bash(az group list:*)",
+      "Bash(az resource list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "WebFetch(domain:learn.microsoft.com)",
+      "WebFetch(domain:registry.terraform.io)",
+      "WebFetch(domain:kubernetes.io)"
+    ],
+    "ask": [
+      "Bash(terraform apply:*)",
+      "Bash(terraform -chdir=* apply:*)",
+      "Bash(terraform init:*)",
+      "Bash(terraform -chdir=* init:*)",
+      "Bash(terraform import:*)",
+      "Bash(terraform state:*)",
+      "Bash(az:*)",
+      "Bash(kubectl:*)",
+      "Bash(helm install:*)",
+      "Bash(helm upgrade:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh secret:*)",
+      "Bash(gh variable:*)"
+    ],
+    "deny": [
+      "Bash(terraform destroy:*)",
+      "Bash(terraform -chdir=* destroy:*)",
+      "Bash(terraform apply -auto-approve:*)",
+      "Bash(az group delete:*)",
+      "Bash(git push --force:*)",
+      "Bash(rm -rf:*)",
+      "Read(**/*.tfstate)",
+      "Read(**/.env)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "python .claude/hooks/block_secrets.py" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "python .claude/hooks/terraform_check.py", "timeout": 180 }]
+      }
+    ]
+  }
+}
