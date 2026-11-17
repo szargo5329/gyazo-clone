@@ -28,6 +28,8 @@ docs/             spec, decisions, diagrams/, runbooks
 - Python (uv): `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`
 - Web: `npm --prefix app/web run lint|test|build`
 - K8s: `kubectl apply --dry-run=server -f ...` (prompt), `helm lint deploy/helm/*`
+- Workflows: `uvx --python 3.12 --from actionlint-py actionlint` (YAML parsing alone misses expression/context errors)
+- IaC scan: `uvx --python 3.12 --from checkov python -m checkov.main -d . --compact` (`uvx checkov` fails on Windows)
 
 ## Conventions
 - Azure naming: `<type>-gyazo-<env>` (e.g. `rg-gyazo-dev`); storage/ACR: `stgyazo<env><suffix>`. Tags on everything: `project=gyazo-clone`, `env`, `owner`, `managed_by=terraform`.

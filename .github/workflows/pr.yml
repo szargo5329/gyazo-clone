@@ -12,10 +12,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # hashFiles() isn't allowed in job-level `if`, so detect which stacks exist here.
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      tf: ${{ steps.d.outputs.tf }}
+      py: ${{ steps.d.outputs.py }}
+      web: ${{ steps.d.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: d
+        run: |
+          has() { [ -n "$(find . -path ./node_modules -prune -o "$@" -print -quit)" ] && echo true || echo false; }
+          echo "tf=$(has -path './infra/*' -name '*.tf')" >> "$GITHUB_OUTPUT"
+          echo "py=$(has -name pyproject.toml)" >> "$GITHUB_OUTPUT"
+          echo "web=$( [ -f app/web/package.json ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
+
   terraform-static:
     name: terraform fmt / validate / tflint
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('infra/**/*.tf') != '' }}
+    needs: detect
+    if: needs.detect.outputs.tf == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -63,7 +80,8 @@ jobs:
   python:
     name: python lint / test
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('**/pyproject.toml') != '' }}
+    needs: detect
+    if: needs.detect.outputs.py == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -75,7 +93,8 @@ jobs:
   web:
     name: web lint / test / build
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('app/web/package.json') != '' }}
+    needs: detect
+    if: needs.detect.outputs.web == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -87,6 +106,15 @@ jobs:
       - run: npm --prefix app/web run lint
       - run: npm --prefix app/web run test --if-present
       - run: npm --prefix app/web run build
+
+  workflow-lint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color
 
   iac-scan:
     name: checkov (IaC security)
