@@ -24,9 +24,11 @@ jobs:
       - id: d
         run: |
           has() { [ -n "$(find . -path ./node_modules -prune -o "$@" -print -quit)" ] && echo true || echo false; }
-          echo "tf=$(has -path './infra/*' -name '*.tf')" >> "$GITHUB_OUTPUT"
-          echo "py=$(has -name pyproject.toml)" >> "$GITHUB_OUTPUT"
-          echo "web=$( [ -f app/web/package.json ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
+          {
+            echo "tf=$(has -path './infra/*' -name '*.tf')"
+            echo "py=$(has -name pyproject.toml)"
+            echo "web=$( [ -f app/web/package.json ] && echo true || echo false )"
+          } >> "$GITHUB_OUTPUT"
 
   terraform-static:
     name: terraform fmt / validate / tflint
