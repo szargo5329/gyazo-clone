@@ -5,7 +5,7 @@ Gyazo-style image sharing (upload → short link → view) on Azure. **The app i
 ## Hard guardrails (never violate)
 - Never run `terraform apply`/`destroy`, or any command that creates, changes or deletes Azure resources or spends money, without the user's explicit approval **in the current session**.
 - Never commit secrets. No keys in code, tfvars, manifests or provenance. Use workload identity / OIDC; secrets live in Key Vault.
-- Stop for the user's approval at: plan before work; diff + `terraform plan` before merge; any cloud change; always for secrets, IAM/role assignments and deletions.
+- **Ask the user only for:** `terraform apply`/`destroy` and any other cloud change (show the `terraform plan` first); spending money; secrets; IAM/role assignments; deleting data or resources. Everything else — branches, commits, PRs, merging green+reviewed PRs, repo settings, tool installs, routine decisions — proceed and report. Record non-trivial decisions in `docs/decisions.md`.
 - Prove work: run fmt/validate/tests/lint and show output. Never claim "works" without evidence.
 - Resist scope creep: no login, social, editing, video. Out-of-scope ideas go to `docs/spec.md` → "Later".
 
