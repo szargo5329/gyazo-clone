@@ -11,17 +11,46 @@ concurrency:
   group: pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+# Actions are pinned to commit SHAs (public repo: tags can be moved). Dependabot bumps them.
+
 jobs:
+  # hashFiles() isn't allowed in job-level `if`, so detect which stacks exist here.
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tf: ${{ steps.d.outputs.tf }}
+      py: ${{ steps.d.outputs.py }}
+      web: ${{ steps.d.outputs.web }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - id: d
+        run: |
+          has() { [ -n "$(find . -path ./node_modules -prune -o "$@" -print -quit)" ] && echo true || echo false; }
+          {
+            echo "tf=$(has -path './infra/*' -name '*.tf')"
+            echo "py=$(has -name pyproject.toml)"
+            echo "web=$( [ -f app/web/package.json ] && echo true || echo false )"
+          } >> "$GITHUB_OUTPUT"
+
   terraform-static:
     name: terraform fmt / validate / tflint
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('infra/**/*.tf') != '' }}
+    timeout-minutes: 10
+    needs: detect
+    if: needs.detect.outputs.tf == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.15.8
-      - uses: terraform-linters/setup-tflint@v4
+      - uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4.1.1
+        with:
+          tflint_version: v0.65.0
       - run: terraform fmt -check -recursive infra
       - name: validate each root
         run: |
@@ -36,37 +65,50 @@ jobs:
   terraform-plan:
     name: terraform plan (dev)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: terraform-static
     # Enabled once M1 sets the OIDC repo variables (no secrets: client/tenant/subscription IDs are identifiers).
+    # The identity behind this job is READ-ONLY (see decisions D-012); apply uses a separate identity.
     if: ${{ vars.AZURE_CLIENT_ID != '' }}
+    # TODO(M1): add `environment: plan` here so the OIDC subject matches D-012's federated credential.
     permissions:
       contents: read
-      id-token: write       # GitHub OIDC token → Azure federated credential
-      pull-requests: write  # post plan summary
+      id-token: write # GitHub OIDC token → Azure federated credential
     env:
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
       ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    defaults:
+      run:
+        shell: bash # explicit bash = -eo pipefail, so a failing plan can't hide behind a pipe
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.15.8
+          terraform_wrapper: false
       - run: terraform -chdir=infra/terraform/envs/dev init -input=false
-      - run: terraform -chdir=infra/terraform/envs/dev plan -input=false -no-color -lock=false | tee plan.txt
-      - name: plan summary
+      - run: terraform -chdir=infra/terraform/envs/dev plan -input=false -no-color -lock=false -out=tfplan
+      - name: plan summary (resource list only; repo is public)
         run: |
-          { echo '```'; tail -c 60000 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          terraform -chdir=infra/terraform/envs/dev show -no-color tfplan > plan.txt
+          { echo '```'; grep -E '^\s+# |^Plan:|^No changes' plan.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   python:
     name: python lint / test
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('**/pyproject.toml') != '' }}
+    timeout-minutes: 10
+    needs: detect
+    if: needs.detect.outputs.py == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - run: uv sync --all-packages --dev
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -75,10 +117,14 @@ jobs:
   web:
     name: web lint / test / build
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('app/web/package.json') != '' }}
+    timeout-minutes: 10
+    needs: detect
+    if: needs.detect.outputs.web == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -88,25 +134,45 @@ jobs:
       - run: npm --prefix app/web run test --if-present
       - run: npm --prefix app/web run build
 
+  workflow-lint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 # 1.7.7
+        with:
+          args: -color
+
   iac-scan:
     name: checkov (IaC security)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: bridgecrewio/checkov-action@v12
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: bridgecrewio/checkov-action@3f0caf0c3aa9f56ade6b49f6e60b63aaeafb75a3 # v12.3141.0
         with:
           directory: .
           framework: terraform,kubernetes,helm,github_actions
-          quiet: true          # only show failed checks
+          quiet: true # only show failed checks
           # Suppress a check only inline (#checkov:skip=CKV_X:reason) with a reason, never here.
 
   secrets-scan:
     name: gitleaks
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # gitleaks reads the PR's commits via the API
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

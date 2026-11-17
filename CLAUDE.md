@@ -5,7 +5,7 @@ Gyazo-style image sharing (upload → short link → view) on Azure. **The app i
 ## Hard guardrails (never violate)
 - Never run `terraform apply`/`destroy`, or any command that creates, changes or deletes Azure resources or spends money, without the user's explicit approval **in the current session**.
 - Never commit secrets. No keys in code, tfvars, manifests or provenance. Use workload identity / OIDC; secrets live in Key Vault.
-- Stop for the user's approval at: plan before work; diff + `terraform plan` before merge; any cloud change; always for secrets, IAM/role assignments and deletions.
+- **Ask the user only for:** `terraform apply`/`destroy` and any other cloud change (show the `terraform plan` first); spending money; secrets; IAM/role assignments; deleting data or resources. Everything else — branches, commits, PRs, merging green+reviewed PRs, repo settings, tool installs, routine decisions — proceed and report. Record non-trivial decisions in `docs/decisions.md`.
 - Prove work: run fmt/validate/tests/lint and show output. Never claim "works" without evidence.
 - Resist scope creep: no login, social, editing, video. Out-of-scope ideas go to `docs/spec.md` → "Later".
 
@@ -28,6 +28,8 @@ docs/             spec, decisions, diagrams/, runbooks
 - Python (uv): `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`
 - Web: `npm --prefix app/web run lint|test|build`
 - K8s: `kubectl apply --dry-run=server -f ...` (prompt), `helm lint deploy/helm/*`
+- Workflows: `MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W):/repo" -w /repo rhysd/actionlint:1.7.7` — same image as CI, includes shellcheck (YAML parsing alone misses expression/context errors)
+- IaC scan: `uvx --python 3.12 --from checkov python -m checkov.main -d . --compact` (`uvx checkov` fails on Windows)
 
 ## Conventions
 - Azure naming: `<type>-gyazo-<env>` (e.g. `rg-gyazo-dev`); storage/ACR: `stgyazo<env><suffix>`. Tags on everything: `project=gyazo-clone`, `env`, `owner`, `managed_by=terraform`.

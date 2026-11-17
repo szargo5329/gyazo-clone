@@ -47,3 +47,11 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 ## D-011 DNS / TLS — Proposed, *verify*
 - **Proposal:** Azure public IP DNS label (`<label>.<region>.cloudapp.azure.com`) + cert-manager with Let's Encrypt. No domain purchase needed.
 - **Alternative:** Buy a domain + Azure DNS zone (nicer URL, small cost).
+
+## D-012 CI identities: read-only plan identity, separate apply identity — Accepted
+- **Context:** The PR workflow runs `terraform plan` with GitHub OIDC on `pull_request`. The workflow and Terraform code come from the PR branch, so anyone able to open a same-repo PR can influence what runs with the Azure token. The federated subject for PRs (`repo:<owner>/gyazo-clone:pull_request`) can't be pinned to a branch. Fork PRs get no OIDC token.
+- **Decision:** Two user-assigned managed identities.
+  - `id-gyazo-ci-plan`: Reader on the RG plus Storage Blob Data Reader on the state container. Its subject is a GitHub Environment `plan` (`...:environment:plan`). Plan runs with `-lock=false`.
+  - `id-gyazo-ci-apply`: write roles. Its subject is pinned to `ref:refs/heads/main`, or a protected `apply` environment with required reviewers.
+- **Alternatives:** One Contributor identity for both (simplest; a malicious PR could change infra). `pull_request_target` (runs base-branch code, but checking out PR code with secrets is a known foot-gun).
+- **Why:** The worst a PR can do with the plan identity is read. Writes only happen from `main` after review. Found by the reviewer agent on PR 1.
