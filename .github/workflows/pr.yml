@@ -70,6 +70,7 @@ jobs:
     # Enabled once M1 sets the OIDC repo variables (no secrets: client/tenant/subscription IDs are identifiers).
     # The identity behind this job is READ-ONLY (see decisions D-012); apply uses a separate identity.
     if: ${{ vars.AZURE_CLIENT_ID != '' }}
+    # TODO(M1): add `environment: plan` here so the OIDC subject matches D-012's federated credential.
     permissions:
       contents: read
       id-token: write # GitHub OIDC token → Azure federated credential
@@ -95,7 +96,7 @@ jobs:
       - name: plan summary (resource list only; repo is public)
         run: |
           terraform -chdir=infra/terraform/envs/dev show -no-color tfplan > plan.txt
-          { echo '```'; grep -E '^\s+# |^Plan:|^No changes' plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; grep -E '^\s+# |^Plan:|^No changes' plan.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   python:
     name: python lint / test
