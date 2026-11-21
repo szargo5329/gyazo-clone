@@ -98,7 +98,7 @@ jobs:
           -backend-config="storage_account_name=${{ vars.TFSTATE_ACCOUNT }}"
           -backend-config="container_name=tfstate" -backend-config="key=dev.tfstate"
           -backend-config="use_azuread_auth=true"
-      - run: terraform -chdir=infra/terraform/envs/dev plan -input=false -no-color -lock=false -out=tfplan
+      - run: terraform -chdir=infra/terraform/envs/dev plan -input=false -no-color -lock=false -out=tfplan > /dev/null
       - name: plan summary (resource list only; repo is public)
         run: |
           terraform -chdir=infra/terraform/envs/dev show -no-color tfplan > plan.txt

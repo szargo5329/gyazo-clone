@@ -2,7 +2,7 @@
 # skipped deliberately for cost; images are pulled by AKS with AcrPull via managed identity.
 resource "azurerm_container_registry" "this" {
   #checkov:skip=CKV_AZURE_139:Public endpoint needed by GitHub-hosted runners and AKS without private endpoints (Premium-only, deferred for cost).
-  #checkov:skip=CKV_AZURE_163:Defender for Containers vulnerability scanning is a paid add-on; image scanning to be done in CI instead.
+  #checkov:skip=CKV_AZURE_163:Defender for Containers vulnerability scanning is a paid add-on; image scanning with Trivy in CI is planned for M3 (not yet in place).
   #checkov:skip=CKV_AZURE_164:Content trust (signed images) is Premium-only.
   #checkov:skip=CKV_AZURE_165:Geo-replication is Premium-only; single-region demo (non-goal: HA/multi-region).
   #checkov:skip=CKV_AZURE_166:Quarantine policy is Premium-only.

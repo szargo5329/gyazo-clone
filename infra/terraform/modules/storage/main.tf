@@ -7,7 +7,7 @@ resource "azurerm_storage_account" "this" {
   #checkov:skip=CKV2_AZURE_33:Private endpoints deferred for cost (docs/spec.md Later); shared keys off, Entra RBAC only.
   #checkov:skip=CKV_AZURE_59:Public endpoint required until private endpoints exist: browsers fetch images via user-delegation SAS (D-004).
   #checkov:skip=CKV_AZURE_35:Default-deny firewall would break SAS redirects to browsers and GitHub-hosted runners; Entra RBAC is the control.
-  #checkov:skip=CKV_AZURE_33:Classic queue analytics logging deferred; Azure Monitor diagnostics come with the observability milestones.
+  #checkov:skip=CKV_AZURE_33:Classic queue analytics logging not enabled: demo data, no compliance need; access is auditable via Entra sign-in + Activity logs. Revisit if storage diagnostics are added in M7.
   name                     = "stgyazo${var.env}${var.suffix}"
   resource_group_name      = var.resource_group_name
   location                 = var.location
@@ -50,7 +50,7 @@ resource "azurerm_storage_account" "this" {
 # storage_account_id makes these go through the ARM control plane, which works
 # with shared keys disabled.
 resource "azurerm_storage_container" "images" {
-  #checkov:skip=CKV2_AZURE_21:Classic blob analytics logging deferred; Azure Monitor diagnostics come with the observability milestones.
+  #checkov:skip=CKV2_AZURE_21:Classic blob analytics logging not enabled: demo data, no compliance need; access is auditable via Entra sign-in + Activity logs. Revisit if storage diagnostics are added in M7.
   name                  = "images"
   storage_account_id    = azurerm_storage_account.this.id
   container_access_type = "private"
@@ -62,7 +62,7 @@ resource "azurerm_storage_queue" "image_jobs" {
 }
 
 resource "azurerm_storage_table" "images" {
-  #checkov:skip=CKV2_AZURE_20:Classic table analytics logging deferred; Azure Monitor diagnostics come with the observability milestones.
+  #checkov:skip=CKV2_AZURE_20:Classic table analytics logging not enabled: demo data, no compliance need; access is auditable via Entra sign-in + Activity logs. Revisit if storage diagnostics are added in M7.
   name               = "images"
   storage_account_id = azurerm_storage_account.this.id
 }

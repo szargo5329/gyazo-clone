@@ -6,8 +6,8 @@
 #   az keyvault secret set --vault-name <vault> --name owner-api-key --value "$(openssl rand -base64 32)"
 # (that needs a data-plane role such as Key Vault Secrets Officer on the vault).
 resource "azurerm_key_vault" "this" {
-  #checkov:skip=CKV_AZURE_42:Purge protection off on purpose; see the purge_protection_enabled comment.
-  #checkov:skip=CKV_AZURE_110:Purge protection off on purpose; see the purge_protection_enabled comment.
+  #checkov:skip=CKV_AZURE_42:Purge protection off on purpose: it would keep the deleted vault (and its cleanup) blocked for the soft-delete period after teardown. Accepted risk in docs/security.md.
+  #checkov:skip=CKV_AZURE_110:Purge protection off on purpose: it would keep the deleted vault (and its cleanup) blocked for the soft-delete period after teardown. Accepted risk in docs/security.md.
   #checkov:skip=CKV_AZURE_109:Default-deny firewall deferred with private endpoints (cost); RBAC authorization is the control.
   #checkov:skip=CKV_AZURE_189:Public endpoint required until private endpoints exist (deferred for cost, docs/spec.md Later).
   #checkov:skip=CKV2_AZURE_32:Private endpoints deferred for cost (docs/spec.md Later).

@@ -33,6 +33,8 @@ locals {
       @Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${local.delegable_role_guids}}
       AND
       @Request[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'}
+      AND
+      @Request[Microsoft.Authorization/roleAssignments:PrincipalId] ForAnyOfAnyValues:GuidNotEquals {${azurerm_user_assigned_identity.ci_apply.principal_id}, ${azurerm_user_assigned_identity.ci_plan.principal_id}}
      )
     )
     AND
@@ -115,15 +117,18 @@ resource "azurerm_role_assignment" "ci_apply_state_contributor" {
 # needs to read image bytes or secret values. Add a role only if an apply proves it's needed.
 
 # Lets the main config create the workload identities' role assignments, but only
-# for the allowlisted data-plane roles above. ci-apply cannot grant itself or anyone
-# else Owner/Contributor/RBAC admin, and cannot delete its own assignments.
+# for the allowlisted data-plane roles, only to service principals, and never to the CI
+# identities themselves (no self-grant of image/secret access). It cannot grant
+# Owner/Contributor/RBAC admin. This *narrows* CI's power rather than eliminating it:
+# Contributor can still create resources that carry their own identity. Reviewed by a human
+# at every apply via the `apply` environment.
 resource "azurerm_role_assignment" "ci_apply_rbac_admin" {
   scope                = azurerm_resource_group.env.id
   role_definition_name = "Role Based Access Control Administrator"
   principal_id         = azurerm_user_assigned_identity.ci_apply.principal_id
   principal_type       = "ServicePrincipal"
   condition_version    = "2.0"
-  condition            = local.rbac_admin_condition
+  condition            = trimspace(local.rbac_admin_condition) # no trailing newline → no perpetual diff
   description          = "Constrained delegation: assign/delete only allowlisted data-plane roles."
 
   lifecycle {
