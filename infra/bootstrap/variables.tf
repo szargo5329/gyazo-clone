@@ -13,17 +13,6 @@ variable "owner" {
   default     = "szargo5329"
 }
 
-variable "github_repo" {
-  description = "GitHub repository (`<owner>/<name>`) trusted by the CI federated identity credentials."
-  type        = string
-  default     = "szargo5329/gyazo-clone"
-
-  validation {
-    condition     = can(regex("^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", var.github_repo))
-    error_message = "The github_repo value must look like <owner>/<name>."
-  }
-}
-
 variable "github_subject_repo" {
   description = <<-EOT
     Repository part of the OIDC `sub` claim GitHub actually sends: `<owner>@<owner_id>/<repo>@<repo_id>`.
