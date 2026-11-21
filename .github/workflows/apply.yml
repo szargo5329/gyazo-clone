@@ -1,0 +1,54 @@
+name: apply
+
+# Applies infra/terraform/envs/dev after a merge to main.
+# The `apply` environment requires the owner's approval in GitHub before this job gets an Azure token,
+# so a human still approves every apply, after reading the plan printed by the plan step.
+on:
+  push:
+    branches: [main]
+    paths: ["infra/terraform/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-dev
+  cancel-in-progress: false # never cancel a running apply
+
+jobs:
+  apply:
+    name: terraform apply (dev)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ vars.AZURE_TENANT_ID != '' }}
+    environment: apply # required reviewer + main only; OIDC subject repo:<repo>:environment:apply
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }} # `apply` environment var = id-gyazo-ci-apply
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/terraform/envs/dev
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+      - run: >-
+          terraform init -input=false
+          -backend-config="resource_group_name=${{ vars.TFSTATE_RG }}"
+          -backend-config="storage_account_name=${{ vars.TFSTATE_ACCOUNT }}"
+          -backend-config="container_name=tfstate" -backend-config="key=dev.tfstate"
+          -backend-config="use_azuread_auth=true"
+      - run: terraform plan -input=false -no-color -out=tfplan
+      - run: terraform apply -input=false -no-color tfplan

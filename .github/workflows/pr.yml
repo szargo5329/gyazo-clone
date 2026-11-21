@@ -67,10 +67,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: terraform-static
-    # Enabled once M1 sets the OIDC repo variables (no secrets: client/tenant/subscription IDs are identifiers).
-    # The identity behind this job is READ-ONLY (see decisions D-012); apply uses a separate identity.
-    if: ${{ vars.AZURE_CLIENT_ID != '' }}
-    # TODO(M1): add `environment: plan` here so the OIDC subject matches D-012's federated credential.
+    # Enabled once bootstrap is applied and the variables are set (identifiers, not secrets).
+    # Repo vars: AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, TFSTATE_RG, TFSTATE_ACCOUNT.
+    # `plan` environment var AZURE_CLIENT_ID = id-gyazo-ci-plan (READ-ONLY, D-012).
+    if: ${{ vars.AZURE_TENANT_ID != '' }}
+    environment: plan # OIDC subject repo:<repo>:environment:plan must match the federated credential
     permissions:
       contents: read
       id-token: write # GitHub OIDC token → Azure federated credential
@@ -91,7 +92,12 @@ jobs:
         with:
           terraform_version: 1.15.8
           terraform_wrapper: false
-      - run: terraform -chdir=infra/terraform/envs/dev init -input=false
+      - run: >-
+          terraform -chdir=infra/terraform/envs/dev init -input=false
+          -backend-config="resource_group_name=${{ vars.TFSTATE_RG }}"
+          -backend-config="storage_account_name=${{ vars.TFSTATE_ACCOUNT }}"
+          -backend-config="container_name=tfstate" -backend-config="key=dev.tfstate"
+          -backend-config="use_azuread_auth=true"
       - run: terraform -chdir=infra/terraform/envs/dev plan -input=false -no-color -lock=false -out=tfplan
       - name: plan summary (resource list only; repo is public)
         run: |
