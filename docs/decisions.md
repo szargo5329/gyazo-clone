@@ -76,6 +76,7 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - `id-gyazo-ci-apply`: write roles. Its subject is pinned to `ref:refs/heads/main`, or a protected `apply` environment with required reviewers.
 - **Alternatives:** One Contributor identity for both (simplest; a malicious PR could change infra). `pull_request_target` (runs base-branch code, but checking out PR code with secrets is a known foot-gun).
 - **Why:** The worst a PR can do with the plan identity is read. Writes only happen from `main` after review. Found by the reviewer agent on PR 1.
+- **Update (2026-11-21):** GitHub's OIDC `sub` claim now embeds immutable IDs: `repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<env>`. The first CI plan failed with AADSTS700213 until the federated credentials matched. This is stronger than name-based subjects, because a deleted and re-created repo with the same name gets a new ID.
 
 ## D-013 Region centralus, nodes Standard_D2s_v6 — Accepted (supersedes eastus2)
 - **Context:** The free trial couldn't raise quota. After upgrading to pay-as-you-go: 10 vCPUs per region. DASv5/DSv5/Dv5 are at 0, and DASv5 requests are declined in eastus2 ("high demand"). Dsv6 has 10, but Dsv6 sizes are `NotAvailableForSubscription` in eastus2 and westus2.
@@ -88,13 +89,25 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 - **Decision:** Security stays the **first** priority of the `reviewer` agent, backed by deterministic tools (Checkov, gitleaks, actionlint, later Trivy) and the human plan gate. Threat model lives in `docs/security.md`.
 - **Alternatives:** A separate `security-reviewer` agent on every PR.
 - **Why:** Almost every change in this repo *is* security-relevant (IAM, network, identity), so a second reviewer would read the same diff with the same model and mostly duplicate findings at double the cost. Scanners give the independent check. Revisit if the reviewer starts missing security issues, or reviews get long enough that security gets crowded out. The retro is where that gets decided.
-- **Update (2026-11-21):** GitHub's OIDC `sub` claim now embeds immutable IDs: `repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<env>`. The first CI plan failed with AADSTS700213 until the federated credentials matched. This is stronger than name-based subjects, because a deleted and re-created repo with the same name gets a new ID.
 
 ## D-015 Storage table managed via azapi (ARM) instead of azurerm — Accepted
 - **Context:** `azurerm_storage_table` (v5) reads table ACLs through the **data plane** (`Exists`/`GetACLs`). The CI plan identity is Reader-only by design (D-012), so `terraform plan` failed with a 403. The researcher confirmed in the provider source that container and queue reads go through ARM only. The table holds image IDs, and an ID is a capability to view an image, so data-plane read on it means reading every image.
-- **Decision:** `azapi_resource` of type `Microsoft.Storage/storageAccounts/tableServices/tables` (an ARM GET, which Reader covers). Migrated with root-module `removed { destroy = false }` + `import`, because child-module imports need Terraform 1.16 and we pin 1.15.8. The ARM ID is unchanged, so the existing role assignments are untouched. The migration blocks are deleted in a follow-up PR after the apply.
+- **Decision:** `azapi_resource` of type `Microsoft.Storage/storageAccounts/tableServices/tables` (an ARM GET, which Reader covers). Migrated with root-module `removed { destroy = false }` + `import`, because child-module imports need Terraform 1.16 and we pin 1.15.8. The ARM ID is unchanged, so the existing role assignments are untouched. The migration blocks were applied on 2026-11-21 and deleted in the follow-up PR (`infra/m1-followups`).
 - **Alternatives:**
   - Give ci-plan Storage Table Data Reader: lets PR-triggered code read every image ID.
   - `terraform state rm` + `import`: imperative, not visible in a reviewed plan.
   - Create the table at app startup: drift, and the app would need account-level rights.
 - **Why:** keeps the plan identity unable to read app data. The cost is one extra provider (azapi, Microsoft's ARM provider).
+
+## D-016 Destroy/replace guard in CI — Accepted
+- **Context:** After the table migration, the reviewer asked that safety not depend on a human spotting a destroy in a plan summary.
+- **Decision:**
+  - `apply.yml` fails the plan job if the saved plan deletes or replaces anything, so the Approve button never appears.
+  - The only way through is a manual `workflow_dispatch` run with the `allow_destroy: true` input, for deliberate teardown.
+  - `pr.yml` only warns, because a PR may legitimately propose a destroy, and the human reviews it.
+  - Detection uses `terraform show -json` + `jq` on `change.actions` containing `delete`, which covers both delete and replace.
+- **Alternatives:**
+  - A repo variable to allow destroys: it's persistent and easy to forget to turn off.
+  - Treating any manual run as allowed: too easy.
+  - Rely on human review only: humans miss things in long plans.
+- **Trade-off:** Checkov's SLSA rule CKV_GHA_7 forbids `workflow_dispatch` inputs, so it's skipped inline with a reason. The input never reaches Terraform; it only unblocks the guard.

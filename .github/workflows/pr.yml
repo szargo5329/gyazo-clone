@@ -61,6 +61,8 @@ jobs:
             echo "::endgroup::"
           done
       - run: tflint --init && tflint --recursive
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # authenticated plugin download (anonymous API is rate-limited on shared runners)
 
   terraform-plan:
     name: terraform plan (dev)
@@ -71,7 +73,8 @@ jobs:
     # Repo vars: AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, TFSTATE_RG, TFSTATE_ACCOUNT.
     # `plan` environment var AZURE_CLIENT_ID = id-gyazo-ci-plan (READ-ONLY, D-012).
     if: ${{ vars.AZURE_TENANT_ID != '' }}
-    environment: plan # OIDC subject repo:<repo>:environment:plan must match the federated credential
+    # OIDC subject repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:plan must match the federated credential (D-012)
+    environment: plan
     permissions:
       contents: read
       id-token: write # GitHub OIDC token → Azure federated credential
@@ -99,9 +102,26 @@ jobs:
           -backend-config="container_name=tfstate" -backend-config="key=dev.tfstate"
           -backend-config="use_azuread_auth=true"
       - run: terraform -chdir=infra/terraform/envs/dev plan -input=false -no-color -lock=false -out=tfplan > /dev/null
+      # Destroy/replace guard: warn only. A PR may legitimately propose a destroy; the reviewer decides.
+      # apply.yml fails on the same condition unless it is a deliberate manual run.
       - name: plan summary (resource list only; repo is public)
         run: |
           terraform -chdir=infra/terraform/envs/dev show -no-color tfplan > plan.txt
+          terraform -chdir=infra/terraform/envs/dev show -json tfplan > plan.json
+          # "delete" in actions covers delete and replace (["delete","create"] / ["create","delete"]).
+          jq -r '.resource_changes[]? | select(any(.change.actions[]; . == "delete")) | .address' plan.json > destroys.txt
+          count=$(grep -c . destroys.txt || true)
+          if [ "$count" -gt 0 ]; then
+            echo "::warning::Plan destroys or replaces $count resource(s); see the run summary."
+            {
+              echo "> [!WARNING]"
+              echo "> **This plan destroys or replaces $count resource(s).** The apply workflow will refuse it unless run manually with \`allow_destroy\`."
+              echo
+              # shellcheck disable=SC2016  # literal backticks for markdown, no expansion intended
+              sed 's/^/- `/; s/$/`/' destroys.txt
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           { echo '```'; grep -E '^\s+# |^Plan:|^No changes' plan.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   python:
