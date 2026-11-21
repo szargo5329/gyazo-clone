@@ -45,7 +45,7 @@ output "image_jobs_queue_name" {
 
 output "images_table_id" {
   description = "Resource Manager ID of the images table (role-assignment scope)."
-  value       = azurerm_storage_table.images.resource_manager_id
+  value       = azurerm_storage_table.images.id # v5: with storage_account_id, `id` is the ARM ID (resource_manager_id is empty)
 }
 
 output "images_table_name" {

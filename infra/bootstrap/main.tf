@@ -125,7 +125,7 @@ resource "azurerm_federated_identity_credential" "ci_plan" {
   user_assigned_identity_id = azurerm_user_assigned_identity.ci_plan.id
   issuer                    = local.github_oidc_issuer
   audience                  = [local.github_oidc_audience]
-  subject                   = "repo:${var.github_repo}:environment:plan"
+  subject                   = "repo:${var.github_subject_repo}:environment:plan"
 }
 
 resource "azurerm_federated_identity_credential" "ci_apply" {
@@ -133,5 +133,5 @@ resource "azurerm_federated_identity_credential" "ci_apply" {
   user_assigned_identity_id = azurerm_user_assigned_identity.ci_apply.id
   issuer                    = local.github_oidc_issuer
   audience                  = [local.github_oidc_audience]
-  subject                   = "repo:${var.github_repo}:environment:apply"
+  subject                   = "repo:${var.github_subject_repo}:environment:apply"
 }
