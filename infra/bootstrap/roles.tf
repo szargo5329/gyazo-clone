@@ -23,6 +23,9 @@ locals {
 
   # Constrained-delegation condition (condition_version 2.0), in the documented format:
   # writes are checked against the requested role, deletes against the existing one.
+  # Set operators matter: for one value X vs {a,b}, ForAnyOfAnyValues:GuidEquals = "X is one of",
+  # ForAnyOfAllValues:GuidNotEquals = "X is none of" (Microsoft's documented exclusion form).
+  # ForAnyOfAnyValues:GuidNotEquals would be "X != a OR X != b", which is always true. Caught in review.
   rbac_admin_condition = <<-EOT
     (
      (
@@ -34,7 +37,7 @@ locals {
       AND
       @Request[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'}
       AND
-      @Request[Microsoft.Authorization/roleAssignments:PrincipalId] ForAnyOfAnyValues:GuidNotEquals {${azurerm_user_assigned_identity.ci_apply.principal_id}, ${azurerm_user_assigned_identity.ci_plan.principal_id}}
+      @Request[Microsoft.Authorization/roleAssignments:PrincipalId] ForAnyOfAllValues:GuidNotEquals {${azurerm_user_assigned_identity.ci_apply.principal_id}, ${azurerm_user_assigned_identity.ci_plan.principal_id}}
      )
     )
     AND

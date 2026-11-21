@@ -61,6 +61,8 @@ jobs:
         run: |
           terraform -chdir="$TF_DIR" show -no-color tfplan > plan.txt
           { echo '### Review this before approving the apply job'; echo '```'; grep -E '^\s+# |^Plan:|^No changes' plan.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # Public repo: logged-in users can download artifacts. The plan file holds full planned values,
+      # so sensitive values must NEVER enter this config (they don't today: no secrets in Terraform).
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tfplan
