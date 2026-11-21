@@ -61,8 +61,13 @@ resource "azurerm_storage_queue" "image_jobs" {
   storage_account_id = azurerm_storage_account.this.id
 }
 
-resource "azurerm_storage_table" "images" {
-  #checkov:skip=CKV2_AZURE_20:Classic table analytics logging not enabled: demo data, no compliance need; access is auditable via Entra sign-in + Activity logs. Revisit if storage diagnostics are added in M7.
-  name               = "images"
-  storage_account_id = azurerm_storage_account.this.id
+# azapi (pure ARM) instead of azurerm_storage_table: azurerm v5 refreshes the table
+# through the data plane (Exists/GetACLs), which 403s for the Reader-only CI plan
+# identity. azapi reads it via the control plane only (docs/decisions.md D-015).
+# Do not switch to azapi_data_plane_resource: that is data plane again.
+resource "azapi_resource" "images_table" {
+  type      = "Microsoft.Storage/storageAccounts/tableServices/tables@2026-09-01"
+  name      = "images"
+  parent_id = "${azurerm_storage_account.this.id}/tableServices/default"
+  body      = {}
 }

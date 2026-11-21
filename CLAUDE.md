@@ -44,3 +44,11 @@ docs/             spec, decisions, diagrams/, runbooks
 - `researcher` — read-only; verify Azure/K8s facts against current docs before decisions.
 - `infra-writer` — writes Terraform/manifests/Helm per these conventions; runs fmt/validate.
 - `reviewer` — read-only review of a diff for security, IAM, cost, correctness.
+- `auditor` — read-only check of the orchestrator's *process* (delegation, review coverage, evidence behind claims) before anything is presented for approval.
+
+## Orchestration rules (from the M1 lessons)
+- Researcher before any decision or unfamiliar API. Infra-writer makes Terraform/manifest edits; the orchestrator doesn't hand-edit IaC except trivial typos, and those still get reviewed.
+- **Any commit after the reviewer's last approval goes back to the reviewer**, including "small" fixes made during an apply.
+- After any `.tf` edit, run the full suite (fmt, validate both roots, tflint, checkov) before committing, not just the check you think is relevant.
+- Auditor sign-off before presenting a plan for apply, a merge, or a milestone as done.
+- Live verification (apply, drift re-plan, CI OIDC run) is a required step: some bugs only show up there.

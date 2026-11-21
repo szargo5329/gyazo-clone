@@ -89,3 +89,12 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 - **Alternatives:** A separate `security-reviewer` agent on every PR.
 - **Why:** Almost every change in this repo *is* security-relevant (IAM, network, identity), so a second reviewer would read the same diff with the same model and mostly duplicate findings at double the cost. Scanners give the independent check. Revisit if the reviewer starts missing security issues, or reviews get long enough that security gets crowded out. The retro is where that gets decided.
 - **Update (2026-11-21):** GitHub's OIDC `sub` claim now embeds immutable IDs: `repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<env>`. The first CI plan failed with AADSTS700213 until the federated credentials matched. This is stronger than name-based subjects, because a deleted and re-created repo with the same name gets a new ID.
+
+## D-015 Storage table managed via azapi (ARM) instead of azurerm — Accepted
+- **Context:** `azurerm_storage_table` (v5) reads table ACLs through the **data plane** (`Exists`/`GetACLs`). The CI plan identity is Reader-only by design (D-012), so `terraform plan` failed with a 403. The researcher confirmed in the provider source that container and queue reads go through ARM only. The table holds image IDs, and an ID is a capability to view an image, so data-plane read on it means reading every image.
+- **Decision:** `azapi_resource` of type `Microsoft.Storage/storageAccounts/tableServices/tables` (an ARM GET, which Reader covers). Migrated with root-module `removed { destroy = false }` + `import`, because child-module imports need Terraform 1.16 and we pin 1.15.8. The ARM ID is unchanged, so the existing role assignments are untouched. The migration blocks are deleted in a follow-up PR after the apply.
+- **Alternatives:**
+  - Give ci-plan Storage Table Data Reader: lets PR-triggered code read every image ID.
+  - `terraform state rm` + `import`: imperative, not visible in a reviewed plan.
+  - Create the table at app startup: drift, and the app would need account-level rights.
+- **Why:** keeps the plan identity unable to read app data. The cost is one extra provider (azapi, Microsoft's ARM provider).
