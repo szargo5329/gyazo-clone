@@ -4,11 +4,19 @@ name: apply
 #   1. plan  — read-only identity; writes the resource list to the run summary and uploads the plan file.
 #   2. apply — waits for the owner's approval in the `apply` environment, then applies EXACTLY that plan file.
 # So the approver reads the real plan (in the run summary) before clicking Approve.
+# Destroy/replace guard: the plan job FAILS if the plan deletes or replaces anything, so an accidental
+# destroy never reaches the Approve button. Intentional teardown = manual run with allow_destroy: true.
 on:
   push:
     branches: [main]
     paths: ["infra/terraform/**"]
   workflow_dispatch:
+    # checkov:skip=CKV_GHA_7:allow_destroy is a safety gate, not a build parameter; it never reaches Terraform and only unblocks a deliberate teardown
+    inputs:
+      allow_destroy:
+        description: "Allow a plan that deletes or replaces resources (still needs approval in the apply environment)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -57,10 +65,35 @@ jobs:
           -backend-config="use_azuread_auth=true"
       - name: plan (full output kept out of the public log)
         run: terraform -chdir="$TF_DIR" plan -input=false -no-color -lock=false -out=tfplan > /dev/null
-      - name: plan summary for the approver
+      - name: plan summary for the approver + destroy/replace guard
+        env:
+          ALLOW_DESTROY: ${{ inputs.allow_destroy }} # via env, never inline in run: (script injection)
         run: |
           terraform -chdir="$TF_DIR" show -no-color tfplan > plan.txt
+          terraform -chdir="$TF_DIR" show -json tfplan > plan.json
+          # "delete" in actions covers delete and replace (["delete","create"] / ["create","delete"]).
+          jq -r '.resource_changes[]? | select(any(.change.actions[]; . == "delete")) | .address' plan.json > destroys.txt
+          count=$(grep -c . destroys.txt || true)
+          allowed=false
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$ALLOW_DESTROY" = "true" ]; then allowed=true; fi
+          if [ "$count" -gt 0 ]; then
+            {
+              echo "> [!CAUTION]"
+              if [ "$allowed" = true ]; then
+                echo "> **This plan destroys or replaces $count resource(s).** Allowed by a manual run with \`allow_destroy: true\`."
+              else
+                echo "> **This plan destroys or replaces $count resource(s). Blocked:** the apply job will not run. To proceed on purpose, run this workflow manually with \`allow_destroy: true\`."
+              fi
+              echo
+              sed 's/^/- `/; s/$/`/' destroys.txt
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           { echo '### Review this before approving the apply job'; echo '```'; grep -E '^\s+# |^Plan:|^No changes' plan.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$count" -gt 0 ] && [ "$allowed" != true ]; then
+            echo "::error::Plan destroys or replaces $count resource(s); refusing without workflow_dispatch allow_destroy=true. See the run summary."
+            exit 1
+          fi
       # Public repo: logged-in users can download artifacts. The plan file holds full planned values,
       # so sensitive values must NEVER enter this config (they don't today: no secrets in Terraform).
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -75,7 +108,8 @@ jobs:
     timeout-minutes: 30
     needs: plan
     if: ${{ github.ref == 'refs/heads/main' }}
-    environment: apply # required reviewer + main only; OIDC subject repo:<repo>:environment:apply
+    # Required reviewer + main only. OIDC subject (D-012): repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:apply
+    environment: apply
     permissions:
       contents: read
       id-token: write
