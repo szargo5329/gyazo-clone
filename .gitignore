@@ -28,3 +28,9 @@ dist/
 
 # Claude local
 .claude/settings.local.json
+
+# Terraform backend config (generated names, not secret; only the .example is committed)
+infra/terraform/envs/*/backend.hcl
+
+# Modules are not root configs; only root lock files are committed
+infra/terraform/modules/**/.terraform.lock.hcl

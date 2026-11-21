@@ -5,7 +5,7 @@ How this repo is built with agents, and why each piece exists.
 | Piece | What | Why |
 |---|---|---|
 | `CLAUDE.md` | Rules, layout, commands every session reads | Consistent behaviour without re-explaining |
-| Subagents (`.claude/agents/`) | researcher (read-only), infra-writer, reviewer (read-only) | Narrow tools = narrow blast radius; fresh context per job |
+| Subagents (`.claude/agents/`) | researcher (read-only), infra-writer, reviewer (read-only, checks code), auditor (read-only, checks the orchestrator's process) | Narrow tools = narrow blast radius; fresh context per job |
 | Permissions (`.claude/settings.json`) | allow: read/test/validate/plan · ask: `az`, `kubectl`, `init`, `apply`, push · deny: `destroy`, force-push, reading state | Agents move fast on safe things; anything touching cloud/IAM stops for a human |
 | Hooks | PreToolUse blocks secret files; PostToolUse runs `terraform fmt`+`validate` after `.tf` edits | Mechanical guardrails beat instructions |
 | CI (`.github/workflows/pr.yml`) | fmt/validate/tflint, plan via OIDC, ruff/pytest, web build, gitleaks | Same checks whether a human or an agent wrote the code |

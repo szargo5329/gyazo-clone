@@ -1,0 +1,8 @@
+# Copy to backend.hcl (gitignored) and fill in from `terraform -chdir=infra/bootstrap output`.
+# Then: terraform -chdir=infra/terraform/envs/dev init -backend-config=backend.hcl
+# No secrets here: Entra ID auth only (the state account has shared keys disabled).
+resource_group_name  = "rg-gyazo-platform"
+storage_account_name = "stgyazotfXXXXX" # state_storage_account_name output
+container_name       = "tfstate"
+key                  = "dev.tfstate"
+use_azuread_auth     = true
