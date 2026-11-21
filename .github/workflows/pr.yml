@@ -115,6 +115,7 @@ jobs:
               echo "> [!WARNING]"
               echo "> **This plan destroys or replaces $count resource(s).** The apply workflow will refuse it unless run manually with \`allow_destroy\`."
               echo
+              # shellcheck disable=SC2016  # literal backticks for markdown, no expansion intended
               sed 's/^/- `/; s/$/`/' destroys.txt
               echo
             } >> "$GITHUB_STEP_SUMMARY"

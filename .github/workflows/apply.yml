@@ -85,6 +85,7 @@ jobs:
                 echo "> **This plan destroys or replaces $count resource(s). Blocked:** the apply job will not run. To proceed on purpose, run this workflow manually with \`allow_destroy: true\`."
               fi
               echo
+              # shellcheck disable=SC2016  # literal backticks for markdown, no expansion intended
               sed 's/^/- `/; s/$/`/' destroys.txt
               echo
             } >> "$GITHUB_STEP_SUMMARY"
