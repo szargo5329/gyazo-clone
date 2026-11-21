@@ -61,6 +61,8 @@ jobs:
             echo "::endgroup::"
           done
       - run: tflint --init && tflint --recursive
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # authenticated plugin download (anonymous API is rate-limited on shared runners)
 
   terraform-plan:
     name: terraform plan (dev)
