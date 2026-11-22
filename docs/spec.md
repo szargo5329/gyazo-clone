@@ -42,3 +42,20 @@ User accounts/login, multi-tenant, social features, editing tools, streaks/gamif
 | M9 | README, write-ups, cost notes, teardown | 1 d | Fresh-read review; `az resource list` empty after destroy |
 
 Cost control: AKS 1 small system node pool (+ autoscaler min 1), stop cluster (`az aks stop`) when not working, budget alert, teardown at the end.
+
+## Milestone status
+
+### M1 — complete with gaps (2026-11-21)
+Evidence:
+- No-op apply from `main` via CI, plan then approved apply (run 44968065880): 0 added, 0 changed, 0 destroyed. The plan artifact's SHA-256 digest matched at upload and download.
+- CI `plan` via OIDC with the read-only identity (PR run 44967945871).
+- Resources were created by the human-approved applies recorded in D-012 and D-015. The CI runs show convergence, not creation.
+
+Known gaps (each has an owner and a trigger):
+
+| Gap | Owner | Close by |
+|---|---|---|
+| ABAC negative test: ci-apply granting a role to itself should get 403. Design-verified only (security.md, "CI escalates"). | orchestrator, run by owner (IAM) | Before the first M3 apply that creates role assignments |
+| Destroy guard blocking path not exercised live; only the pass-through path has run. | orchestrator | Before M9 teardown, at the latest |
+| Budget alert at 50% only; a 90% actual-spend alert is pending (D-017). Created by the owner, not agent-verified. | owner (portal) | Before M3 creates AKS |
+| `setup-uv` / `setup-node` (bumped in #4) not yet exercised: python/web CI jobs skip until `app/` exists. | orchestrator | First M2 PR |
