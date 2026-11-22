@@ -16,7 +16,7 @@ TIMEOUT_S = 40  # up to 4 calls (fmt, init, validate, tflint): 160s < 180s
 
 def run(args: list[str], cwd: pathlib.Path) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(
+        return subprocess.run(  # noqa: S603 - argv from shutil.which, no shell
             args,
             check=False,
             cwd=cwd,
@@ -69,9 +69,7 @@ def main() -> int:
         if not problems:
             val = run([tf, "validate", "-no-color"], d)
             if val.returncode != 0:
-                problems.append(
-                    "terraform validate failed:\n" + val.stdout + val.stderr
-                )
+                problems.append("terraform validate failed:\n" + val.stdout + val.stderr)
         problems += tflint(d)
 
     if problems:

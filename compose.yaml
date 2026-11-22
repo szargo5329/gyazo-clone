@@ -1,0 +1,52 @@
+# Local stack (M2): Azurite (Blob/Queue/Table emulator) + API + worker.
+#   1. create .env (gitignored) containing one line:  OWNER_API_KEY=<random string>
+#      e.g. python -c "import secrets; print('OWNER_API_KEY=' + secrets.token_urlsafe(32))" > .env
+#   2. docker compose up --build
+#   3. open http://localhost:8000
+#
+# STORAGE_ACCOUNT_KEY below is Azurite's documented, public development key
+# (https://learn.microsoft.com/azure/storage/common/storage-use-azurite). It only works
+# against the emulator and is not a secret. Real Azure uses Entra auth, no keys (D-005).
+
+x-storage-env: &storage-env
+  STORAGE_AUTH_MODE: key
+  STORAGE_ACCOUNT_NAME: devstoreaccount1
+  STORAGE_ACCOUNT_KEY: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+  STORAGE_BLOB_ENDPOINT: http://azurite:10000/devstoreaccount1
+  STORAGE_QUEUE_ENDPOINT: http://azurite:10001/devstoreaccount1
+  STORAGE_TABLE_ENDPOINT: http://azurite:10002/devstoreaccount1
+
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.38.0
+    # --skipApiVersionCheck: the Python SDK may send a newer API version than Azurite knows.
+    command: >-
+      azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+      --location /data --skipApiVersionCheck --loose
+    ports: ["127.0.0.1:10000:10000"] # blob only: the browser follows SAS redirects here
+    volumes: [azurite-data:/data]
+
+  api:
+    build: { context: ., dockerfile: app/api/Dockerfile }
+    environment:
+      <<: *storage-env
+      # The browser must reach SAS URLs, so they point at localhost, not "azurite".
+      STORAGE_BLOB_PUBLIC_ENDPOINT: http://localhost:10000/devstoreaccount1
+      PUBLIC_BASE_URL: http://localhost:8000
+      OWNER_API_KEY: ${OWNER_API_KEY:?set OWNER_API_KEY in .env}
+      ENSURE_RESOURCES: "true" # local only: in Azure, Terraform creates container/queue/table
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on: [azurite]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 5s
+      retries: 12
+
+  worker:
+    build: { context: ., dockerfile: app/worker/Dockerfile }
+    environment: *storage-env
+    depends_on:
+      api: { condition: service_healthy } # api creates the queue/table on startup
+
+volumes:
+  azurite-data:

@@ -61,3 +61,20 @@ Known gaps (each has an owner and a trigger):
 | Budget alert at 50% only; a 90% actual-spend alert is pending (D-017). Created by the owner, not agent-verified. | owner (portal) | Before M3 creates AKS |
 | ci-apply write path unproven: every CI apply so far was a no-op, so no write has run as ci-apply. | owner watches the first apply | First M3 apply with real changes |
 | `setup-uv` / `setup-node` (bumped in #4) not yet exercised: python/web CI jobs skip until `app/` exists. | orchestrator | First M2 PR |
+
+### M2 — in review (2026-11-22)
+Evidence (verified locally; CI evidence comes with the PR):
+- `uv run pytest -q`: 58 passed (API routes, auth, validation, CSP headers, SAS shape; worker processing, poison handling, decompression-bomb guard). `npm test`: 12 passed.
+- `scripts/smoke.py` against `docker compose` (Azurite + API + worker): 15/15 checks. Bad key → 401, non-image → 415, upload → 201, worker → ready with a 320×160 WebP thumbnail, `/i/<id>` → 302 to a SAS returning identical bytes, tampered SAS → 403, unknown id → 404, strict CSP.
+- Real browser (desktop app pane): paste → link → thumbnail, with no console or CSP errors. Screenshots: `docs/diagrams/ui-m2-*.jpg`.
+- `vite build` output has no inline scripts or styles (`scripts/check-csp.mjs`, negative-tested).
+
+Known gaps:
+
+| Gap | Owner | Close by |
+|---|---|---|
+| Entra signing path (user-delegation key) untested: Azurite can't issue one (D-019). | orchestrator | First AKS deploy (M3) |
+| ShareX upload not yet run with the real ShareX app; the `.sxcu` format was checked against the docs only. | owner (needs ShareX on Windows) | Before M3 |
+| Ingress rate limit on `/upload` (spec) not in M2; it belongs to the gateway. | orchestrator | M3 (Envoy Gateway) |
+| Docker base images pinned by tag, not digest; no image scan yet. | orchestrator | M3 |
+

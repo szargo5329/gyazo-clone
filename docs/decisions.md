@@ -128,3 +128,20 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - Keep them optional and rely on review: the reviewer sees the result, but nothing stops a merge.
   - Require the python and web jobs too: deferred until `app/` exists (M2): until then they only ever skip, so requiring them adds nothing.
 - **Trade-off:** GitHub counts a job skipped by a job-level `if` as passing. The plan job skips when `AZURE_TENANT_ID` is missing, so deleting that variable would make the required plan check pass silently. Accepted for a solo demo; the variable is checked by the first PR plan after any settings change.
+
+## D-019 One SAS code path, two signing keys (local Azurite vs Azure) — Accepted
+- **Context:** `GET /i/<id>` redirects to a user-delegation SAS (D-004). Azurite can't issue Azure-compatible user-delegation keys, and its OAuth mode needs HTTPS plus hand-made tokens (azure/azurite#2412, still open). Shared keys are disabled in real Azure.
+- **Decision:** The API always builds the URL with `generate_blob_sas`. `STORAGE_AUTH_MODE=key` (local only) signs with Azurite's public dev key; `STORAGE_AUTH_MODE=entra` (the default) signs with a user-delegation key from `DefaultAzureCredential`, cached for 1 hour and refreshed 10 minutes early. SAS is read-only, ≤ 5 minutes (enforced in config), with a 1-minute clock-skew allowance. Separate internal and browser-facing blob endpoints, because the browser follows the redirect.
+- **Alternatives:**
+  - Azurite `--oauth basic` with a self-signed cert and fake tokens: fragile, still not the real Entra path.
+  - Develop against real Azure storage: needs a login and costs money, and every developer needs data-plane roles.
+- **Trade-off:** The `entra` branch (user-delegation key, Storage Blob Delegator role) is **untested** until it runs in AKS (M3). The local tests prove the URL shape and the redirect flow, not Entra signing.
+
+## D-020 M2 runtime, encoding and CI choices — Accepted
+- **Runtime pins:** Python 3.13 (azure-data-tables 12.7.0 doesn't yet list 3.14), Node 24 (vitest 5 needs ≥ 22.12), Azurite `3.38.0` with `--skipApiVersionCheck --loose`. Docker base images are pinned by tag; digests and image scanning come in M3.
+- **Queue encoding:** Base64 text (`TextBase64EncodePolicy`/`DecodePolicy`), set explicitly in both the API (producer) and the worker (consumer), so they can't drift. The SDK's own default is no encoding; Base64 matches Azure Functions and the portal, and KEDA only counts messages.
+- **Worker failure handling:** an invalid image is marked `failed` immediately; transient errors are retried via the visibility timeout; after 5 dequeues the job is treated as poison (marked `failed`, deleted). Processing is idempotent (thumbnail overwrite, entity merge), because delivery is at-least-once.
+- **Sync SDK clients:** FastAPI runs `def` routes in a threadpool. Async clients would add aiohttp for no gain at this scale.
+- **CI:** a new `e2e (compose + smoke)` job builds both images and runs `scripts/smoke.py` against Azurite + API + worker. Checkov now also scans Dockerfiles; `CKV_DOCKER_2` (HEALTHCHECK) is skipped inline, because Kubernetes uses probes. Gitleaks allowlists only Azurite's public dev key (`.gitleaks.toml`).
+- **Required checks (retro rule):** `python lint / test`, `web lint / test / build` and `e2e (compose + smoke)` become required on `main` once this PR is green. They always run now that `app/` exists.
+

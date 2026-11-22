@@ -20,9 +20,9 @@ ALLOWED = [r"\.env\.example$", r"[\\/]envs[\\/][^\\/]+[\\/]terraform\.tfvars$"]
 def main() -> int:
     data = json.load(sys.stdin)
     path = (data.get("tool_input") or {}).get("file_path", "")
-    if not path or any(re.search(p, path, re.I) for p in ALLOWED):
+    if not path or any(re.search(p, path, re.IGNORECASE) for p in ALLOWED):
         return 0
-    if any(re.search(p, path, re.I) for p in BLOCKED):
+    if any(re.search(p, path, re.IGNORECASE) for p in BLOCKED):
         print(
             f"Blocked: '{path}' looks like a secret file. Secrets go in Key Vault; "
             "ask the user to handle this file themselves.",
