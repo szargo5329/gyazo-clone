@@ -42,3 +42,22 @@ User accounts/login, multi-tenant, social features, editing tools, streaks/gamif
 | M9 | README, write-ups, cost notes, teardown | 1 d | Fresh-read review; `az resource list` empty after destroy |
 
 Cost control: AKS 1 small system node pool (+ autoscaler min 1), stop cluster (`az aks stop`) when not working, budget alert, teardown at the end.
+
+## Milestone status
+
+### M1 — complete with gaps (2026-11-21)
+Evidence:
+- No-op apply from `main` via CI (run 44968065880, manual `workflow_dispatch` on `main`): plan job, then the apply job behind the `apply` environment's required-reviewer gate. 0 added, 0 changed, 0 destroyed. The plan artifact's SHA-256 digest matched at upload and download.
+- CI `plan` via OIDC (PR run 44967945871), in the `plan` environment, whose `AZURE_CLIENT_ID` is the read-only `id-gyazo-ci-plan` (pr.yml).
+- Repo settings (not in Terraform; checked with `gh api` on 2026-11-21): `apply` environment requires reviewer szargo5329 and protected branches only (self-approval allowed: a solo-owner gate, not two-person review); `main` requires checks detect, actionlint, checkov, gitleaks, terraform fmt/validate/tflint and terraform plan (the two terraform checks were added on 2026-11-21 after review; a skipped job still satisfies a required check), linear history, no force push or deletion.
+- Resources were created by the human-approved local applies (M1 PR #3; the table migration in D-015). The CI runs show convergence, not creation.
+
+Known gaps (each has an owner and a trigger):
+
+| Gap | Owner | Close by |
+|---|---|---|
+| ABAC negative test: acting as ci-apply, a role-assignment write targeting ci-apply itself should fail with 403 `AuthorizationFailed`. Design-verified only (security.md, "CI escalates"). | owner runs it (IAM); orchestrator prepares it | Before the first M3 apply that creates role assignments |
+| Destroy guard: neither the blocking path nor the `allow_destroy` override has run live; only the pass-through path has. | orchestrator | Before M9 teardown, at the latest |
+| Budget alert at 50% only; a 90% actual-spend alert is pending (D-017). Created by the owner, not agent-verified. | owner (portal) | Before M3 creates AKS |
+| ci-apply write path unproven: every CI apply so far was a no-op, so no write has run as ci-apply. | owner watches the first apply | First M3 apply with real changes |
+| `setup-uv` / `setup-node` (bumped in #4) not yet exercised: python/web CI jobs skip until `app/` exists. | orchestrator | First M2 PR |
