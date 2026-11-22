@@ -120,3 +120,11 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - `azurerm_consumption_budget_resource_group` in the main config: misses spend outside `rg-gyazo-dev` (state account, AKS node resource group `MC_*`).
 - **Trade-off:** Not reproducible from code, so it's recorded here and checked by hand. A budget only alerts; it never stops spending. The manual stops are `az aks stop` (which does not halt disk, ACR, storage or public IP costs) and the documented teardown.
 - **Verify:** Portal → Cost Management → Budgets shows the $50 budget and its alert recipient.
+
+## D-018 Terraform checks required on `main` — Accepted
+- **Context:** In the M1 closeout review, `main` required only detect, actionlint, checkov and gitleaks. A PR breaking `terraform fmt`/validate/tflint or the dev plan could still merge.
+- **Decision:** Also require `terraform fmt / validate / tflint` and `terraform plan (dev)` (repo setting, 2026-11-21; names must equal the job `name:` fields in `pr.yml`).
+- **Alternatives:**
+  - Keep them optional and rely on review: the reviewer sees the result, but nothing stops a merge.
+  - Require the python and web jobs too: deferred until `app/` exists (M2): until then they only ever skip, so requiring them adds nothing.
+- **Trade-off:** GitHub counts a job skipped by a job-level `if` as passing. The plan job skips when `AZURE_TENANT_ID` is missing, so deleting that variable would make the required plan check pass silently. Accepted for a solo demo; the variable is checked by the first PR plan after any settings change.

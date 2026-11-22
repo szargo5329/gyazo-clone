@@ -16,6 +16,9 @@ How this repo is built with agents, and why each piece exists.
 ## Task loop
 spec + acceptance check → researcher (if a decision) → build on a branch → hooks/tests prove it → reviewer → PR + CI → **human gate** → (cloud change: **human approves apply**) → retro at milestone end.
 
+### Approving a CI apply (owner)
+Actions → the `apply` run → **Review deployments** → tick **apply** → **Approve and deploy**. Ticking the box alone does nothing; check that the apply job leaves "Waiting". Read the plan job's run summary first: approve only if it matches what you expect (normally **No changes** or the reviewed plan).
+
 ## MCP servers (proposed, least privilege)
 - **GitHub** — PRs/issues/CI. Needs a fine-grained PAT scoped to this repo only (or reuse `gh` CLI, which already works — preferred, no new credential).
 - **Microsoft Learn docs MCP** — `https://learn.microsoft.com/api/mcp`, read-only, no credentials. Best value.
