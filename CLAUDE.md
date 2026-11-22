@@ -57,4 +57,4 @@ docs/             spec, decisions, diagrams/, runbooks
 - Label every claim: **verified** (evidence: run ID, command output), **design-verified** (read the code/docs only) or **untested**. A no-op apply proves "no drift", never "CI created it" or "the write path works".
 - Dependabot: major-version action bumps go to the reviewer. Anything touching `apply.yml` also needs one manual `workflow_dispatch` apply run (owner approves the gate) before it counts as proven.
 - New CI job → decide in the same PR whether it is a required check on `main`, and record why. Keep required-check names equal to job `name:` fields.
-- Milestone close: `docs/spec.md` → "Milestone status" gets an evidence list and a known-gaps table (owner + deadline per gap). The auditor checks it exists before sign-off.
+- Milestone close: `docs/spec.md` → "Milestone status" gets an evidence list and a known-gaps table (each gap has an owner and a "close by" trigger, e.g. "before M3 creates AKS"). The auditor checks it exists before sign-off.

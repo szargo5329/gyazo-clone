@@ -9,11 +9,24 @@ import shutil
 import subprocess
 import sys
 
+# Per-call limit stays well under the hook's 180s budget (settings.json), so a slow step
+# is reported back as a problem (exit 2) instead of the harness killing the hook silently.
+TIMEOUT_S = 55
+
 
 def run(args: list[str], cwd: pathlib.Path) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        args, check=False, cwd=cwd, capture_output=True, text=True, timeout=120
-    )
+    try:
+        return subprocess.run(
+            args,
+            check=False,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        msg = f"{pathlib.Path(args[0]).name} {' '.join(args[1:2])} timed out after {TIMEOUT_S}s"
+        return subprocess.CompletedProcess(args, 124, stdout="", stderr=msg)
 
 
 def tflint(d: pathlib.Path) -> list[str]:

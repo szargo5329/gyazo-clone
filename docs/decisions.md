@@ -126,5 +126,5 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 - **Decision:** Also require `terraform fmt / validate / tflint` and `terraform plan (dev)` (repo setting, 2026-11-21; names must equal the job `name:` fields in `pr.yml`).
 - **Alternatives:**
   - Keep them optional and rely on review: the reviewer sees the result, but nothing stops a merge.
-  - Require the python and web jobs too: deferred until `app/` exists (M2), so they aren't skipped-but-required from day one.
+  - Require the python and web jobs too: deferred until `app/` exists (M2): until then they only ever skip, so requiring them adds nothing.
 - **Trade-off:** GitHub counts a job skipped by a job-level `if` as passing. The plan job skips when `AZURE_TENANT_ID` is missing, so deleting that variable would make the required plan check pass silently. Accepted for a solo demo; the variable is checked by the first PR plan after any settings change.
