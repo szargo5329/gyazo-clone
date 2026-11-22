@@ -24,7 +24,7 @@ Short threat model for a public, single-user demo. Each control is mapped to wha
 | Supply chain (Actions, images) | Actions pinned to SHAs + Dependabot. Images built in CI and pushed to private ACR, pulled via AcrPull identity. M3: image scanning (Trivy) + pinned base images. | pr.yml |
 | Branch tampering | `main` protected: PR required, required status checks, no force push or deletion. | GitHub settings |
 | XSS stealing the owner key (stored in browser localStorage) | Strict CSP (no inline scripts, same-origin only); key only sent to `/upload`. | spec |
-| Runaway cost | Budget alert ($50); small node pool with autoscaler max; `az aks stop` when idle; documented teardown. | spec |
+| Runaway cost | Budget alert ($50/month, alert at 50%; created manually at billing-account scope, not in Terraform, see D-017); small node pool with autoscaler max; `az aks stop` when idle; documented teardown. | spec |
 
 ## Accepted risks (documented trade-offs)
 - **Public endpoints on Storage, Key Vault and the AKS API server.** They're protected by Entra auth, RBAC and (for AKS) authorized IP ranges. Private endpoints cost about $7/month each plus DNS complexity. Revisit with M8.
