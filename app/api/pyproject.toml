@@ -1,0 +1,21 @@
+[project]
+name = "gyazo-api"
+version = "0.1.0"
+description = "Upload and short-link API for the gyazo-clone demo"
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi>=0.165.0",
+  "uvicorn>=0.54.0",
+  "python-multipart>=0.0.34",
+  "azure-storage-blob>=12.31.1",
+  "azure-storage-queue>=12.18.1",
+  "azure-data-tables>=12.7.0",
+  "azure-identity>=1.27.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gyazo_api"]

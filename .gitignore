@@ -34,3 +34,6 @@ infra/terraform/envs/*/backend.hcl
 
 # Modules are not root configs; only root lock files are committed
 infra/terraform/modules/**/.terraform.lock.hcl
+
+# Agent worktrees (git worktree checkouts inside the repo)
+.claude/worktrees/
