@@ -52,3 +52,9 @@ docs/             spec, decisions, diagrams/, runbooks
 - After any `.tf` edit, run the full suite (fmt, validate both roots, tflint, checkov) before committing, not just the check you think is relevant.
 - Auditor sign-off before presenting a plan for apply, a merge, or a milestone as done.
 - Live verification (apply, drift re-plan, CI OIDC run) is a required step: some bugs only show up there.
+
+## Retro rules (from M1)
+- Label every claim: **verified** (evidence: run ID, command output), **design-verified** (read the code/docs only) or **untested**. A no-op apply proves "no drift", never "CI created it" or "the write path works".
+- Dependabot: major-version action bumps go to the reviewer. Anything touching `apply.yml` also needs one manual `workflow_dispatch` apply run (owner approves the gate) before it counts as proven.
+- New CI job → decide in the same PR whether it is a required check on `main`, and record why. Keep required-check names equal to job `name:` fields.
+- Milestone close: `docs/spec.md` → "Milestone status" gets an evidence list and a known-gaps table (owner + deadline per gap). The auditor checks it exists before sign-off.

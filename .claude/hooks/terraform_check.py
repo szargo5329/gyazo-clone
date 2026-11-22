@@ -1,4 +1,7 @@
-"""PostToolUse hook: after a .tf edit, run terraform fmt and validate in that directory."""
+"""PostToolUse hook: after a .tf edit, run terraform fmt, validate and tflint in that directory.
+
+tflint was added after the M1 retro: skipping it once let an unused variable reach CI.
+"""
 
 import json
 import pathlib
@@ -8,7 +11,25 @@ import sys
 
 
 def run(args: list[str], cwd: pathlib.Path) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=120)
+    return subprocess.run(
+        args, check=False, cwd=cwd, capture_output=True, text=True, timeout=120
+    )
+
+
+def tflint(d: pathlib.Path) -> list[str]:
+    exe = shutil.which("tflint")
+    if not exe:
+        print("tflint not on PATH; skipped tflint", file=sys.stderr)
+        return []
+    root = next((p for p in [d, *d.parents] if (p / ".tflint.hcl").exists()), None)
+    args = [exe, "--no-color", f"--chdir={d}"]
+    if root:
+        args.append(f"--config={root / '.tflint.hcl'}")
+    res = run(args, d)
+    if res.returncode != 0:
+        hint = "tflint failed (run `tflint --init` if plugins are missing):"
+        return [f"{hint}\n{res.stdout}{res.stderr}"]
+    return []
 
 
 def main() -> int:
@@ -35,7 +56,10 @@ def main() -> int:
         if not problems:
             val = run([tf, "validate", "-no-color"], d)
             if val.returncode != 0:
-                problems.append("terraform validate failed:\n" + val.stdout + val.stderr)
+                problems.append(
+                    "terraform validate failed:\n" + val.stdout + val.stderr
+                )
+        problems += tflint(d)
 
     if problems:
         print("\n".join(problems), file=sys.stderr)
