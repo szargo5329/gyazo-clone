@@ -152,13 +152,44 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24 # vitest 5 needs >=22.12; matches the Docker build stage
           cache: npm
           cache-dependency-path: app/web/package-lock.json
       - run: npm --prefix app/web ci
       - run: npm --prefix app/web run lint
       - run: npm --prefix app/web run test --if-present
       - run: npm --prefix app/web run build
+
+  # Builds both images and runs the stack (Azurite + API + worker) end to end with
+  # scripts/smoke.py: the same checks as local dev, against real containers.
+  e2e:
+    name: e2e (compose + smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: detect
+    if: needs.detect.outputs.py == 'true'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - name: start stack
+        run: |
+          # Throwaway per-run key: never stored, only lives in this job.
+          echo "OWNER_API_KEY=$(openssl rand -hex 24)" > .env
+          docker compose up --build --detach --wait
+      - name: smoke test
+        run: |
+          set -a; . ./.env; set +a
+          uv run --all-packages python scripts/smoke.py http://localhost:8000
+      - name: logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down --volumes
 
   workflow-lint:
     name: actionlint
@@ -183,7 +214,7 @@ jobs:
       - uses: bridgecrewio/checkov-action@3f0caf0c3aa9f56ade6b49f6e60b63aaeafb75a3 # v12.3141.0
         with:
           directory: .
-          framework: terraform,kubernetes,helm,github_actions
+          framework: terraform,kubernetes,helm,github_actions,dockerfile
           quiet: true # only show failed checks
           # Suppress a check only inline (#checkov:skip=CKV_X:reason) with a reason, never here.
 

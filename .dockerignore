@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+.git
+.env
+.env.*
+infra
+docs
+deploy
+experiments
+observability
+**/*.tfstate*

@@ -1,0 +1,14 @@
+{
+  "Version": "17.0.0",
+  "Name": "gyazo-clone (local)",
+  "DestinationType": "ImageUploader",
+  "RequestMethod": "POST",
+  "RequestURL": "http://localhost:8000/upload",
+  "Headers": {
+    "X-API-Key": "PASTE_YOUR_OWNER_API_KEY_HERE"
+  },
+  "Body": "MultipartFormData",
+  "FileFormName": "file",
+  "URL": "{json:url}",
+  "ErrorMessage": "{json:detail}"
+}

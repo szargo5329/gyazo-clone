@@ -31,7 +31,7 @@ Short threat model for a public, single-user demo. Each control is mapped to wha
 - **No customer-managed keys or geo-redundancy:** demo data, Microsoft-managed encryption at rest.
 - **Key Vault purge protection off,** so teardown and recreation within a week works.
 - **Single owner key, no rotation automation.** Rotate manually by setting a new secret version.
-- **Bootstrap state is local.** It contains only IDs, and the bootstrap config is small and re-importable.
+- **Bootstrap state is local (gitignored).** It is not just IDs: azurerm records the state storage account's access keys in it. Those keys are unusable while `shared_access_key_enabled = false` (verified 2026-11-21: `allowSharedKeyAccess: false` on both accounts), but anyone who could re-enable shared keys and read this file would gain access. Keep the file off shared drives, and treat it as sensitive. Found by a local gitleaks scan in M2.
 
 ## Who reviews security
 No dedicated security agent; see D-014. Security is the reviewer agent's **first** priority, backed by deterministic scanners (Checkov, gitleaks, actionlint) and the human `terraform plan` gate.

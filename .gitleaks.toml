@@ -1,0 +1,11 @@
+# Extend gitleaks' default rules; allowlist only Azurite's documented public dev key,
+# which works solely against the local emulator (compose.yaml, tests). Anything else
+# that looks like a key still fails the scan.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Azurite well-known development account key (public, emulator only)"
+regexes = [
+  '''Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==''',
+]
