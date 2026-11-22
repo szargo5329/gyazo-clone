@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 
 import pytest
@@ -71,9 +72,11 @@ def test_processor_rejects_garbage(data):
         ThumbnailProcessor().process(data)
 
 
-def test_processor_rejects_decompression_bomb():
-    # Tiny file, huge declared dimensions: must be refused before decoding.
-    bomb = image_bytes("PNG", size=(10_000, 10_000), mode="1")
+@pytest.mark.parametrize("size", [(10_000, 10_000), (8_000, 7_500)])  # 100 MP and 60 MP
+def test_processor_rejects_decompression_bomb(size):
+    # Tiny file, huge declared dimensions: refused from the header, before decoding.
+    # 60 MP sits in Pillow's warn-only band (40-80 MP), so this proves our own hard cap.
+    bomb = image_bytes("PNG", size=size, mode="1")
     with pytest.raises(InvalidImageError):
         ThumbnailProcessor().process(bomb)
 
@@ -121,16 +124,93 @@ def test_handle_poison_message_gives_up_after_max_attempts():
     assert backend.deleted == [job]
 
 
+VALID_ID = "A1b2C3d4E5f6G7h8I9j0Kl"
+
+
+def b64(text: str) -> str:
+    return base64.b64encode(text.encode()).decode()
+
+
 @pytest.mark.parametrize(
     ("content", "expected"),
     [
-        ('{"id": "abc123"}', "abc123"),
-        ('{"id": "../x"}', None),
-        ('{"id": 5}', None),
-        ("{}", None),
-        ("not json", None),
-        ("[]", None),
+        (b64(f'{{"id": "{VALID_ID}"}}'), VALID_ID),
+        (b64('{"id": "abc123"}'), None),  # wrong length
+        (b64('{"id": "' + "é" * 22 + '"}'), None),  # non-ASCII letters
+        (b64('{"id": "../x"}'), None),
+        (b64('{"id": 5}'), None),
+        (b64("{}"), None),
+        (b64("[]"), None),
+        (b64("not json"), None),
+        ("%%% not base64 %%%", None),
+        (f'{{"id": "{VALID_ID}"}}', None),  # plain JSON: wrong encoding, refused
     ],
 )
 def test_parse_message(content, expected):
     assert parse_message(content) == expected
+
+
+class FailingAfterProcess(FakeBackend):
+    def __init__(self, blobs, fail_on: str) -> None:
+        super().__init__(blobs)
+        self.fail_on = fail_on
+        self.give_up_fails = False
+
+    def upload_thumbnail(self, name, data):
+        if self.fail_on == "upload":
+            raise ConnectionError("blob write failed")
+        super().upload_thumbnail(name, data)
+
+    def update_record(self, image_id, fields):
+        if self.fail_on == "update" or (self.give_up_fails and fields.get("status") == "failed"):
+            raise ConnectionError("table write failed")
+        super().update_record(image_id, fields)
+
+
+@pytest.mark.parametrize("fail_on", ["upload", "update"])
+def test_handle_errors_after_processing_retry_instead_of_crashing(fail_on):
+    backend = FailingAfterProcess({"img/abc": image_bytes("PNG")}, fail_on)
+    job = Job("abc", 1, raw=None)
+    assert handle(job, backend, ThumbnailProcessor()) == "retry"  # no exception escapes
+    assert backend.deleted == []
+
+
+def test_handle_errors_after_processing_give_up_at_max_attempts():
+    backend = FailingAfterProcess({"img/abc": image_bytes("PNG")}, "upload")
+    job = Job("abc", MAX_ATTEMPTS, raw=None)
+    assert handle(job, backend, ThumbnailProcessor()) == "failed"
+    assert backend.records["abc"]["status"] == "failed" and backend.deleted == [job]
+
+
+def test_handle_never_raises_even_if_marking_failed_fails():
+    backend = FailingAfterProcess({"img/abc": image_bytes("PNG")}, "upload")
+    backend.give_up_fails = True
+    assert handle(Job("abc", MAX_ATTEMPTS, raw=None), backend, ThumbnailProcessor()) == "retry"
+
+
+def test_handle_drops_job_that_exceeded_attempts_before_any_work():
+    """A job that crashes the process (e.g. OOM) never raises in Python, but its
+    dequeue count climbs: it must be retired without touching the image again."""
+    backend = FakeBackend({})  # download would KeyError if called
+    job = Job("abc", MAX_ATTEMPTS + 1, raw=None)
+    assert handle(job, backend, ThumbnailProcessor()) == "failed"
+    assert backend.records["abc"] == {"status": "failed", "error": "too many attempts"}
+    assert backend.deleted == [job]
+
+
+def test_worker_queue_client_keeps_encoding_and_parses_api_messages(monkeypatch):
+    """Regression twin of the API test: the worker's client must carry the same policy,
+    and what the API's policy produces must parse here."""
+    from azure.storage.queue import TextBase64EncodePolicy
+
+    from gyazo_worker.worker import AzureBackend
+
+    monkeypatch.setenv("STORAGE_AUTH_MODE", "key")
+    monkeypatch.setenv("STORAGE_ACCOUNT_NAME", "devstoreaccount1")
+    monkeypatch.setenv("STORAGE_ACCOUNT_KEY", "dGVzdA==")
+    monkeypatch.setenv("STORAGE_QUEUE_ENDPOINT", "http://azurite:10001/devstoreaccount1")
+    backend = AzureBackend()
+    assert isinstance(backend._queue._message_encode_policy, TextBase64EncodePolicy)
+    producer = TextBase64EncodePolicy()
+    producer.configure(require_encryption=False, key_encryption_key=None, resolver=None)
+    assert parse_message(producer(f'{{"id": "{VALID_ID}"}}')) == VALID_ID

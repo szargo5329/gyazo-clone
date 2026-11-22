@@ -32,7 +32,7 @@ def build_csp(blob_public_endpoint: str) -> str:
             "default-src 'self'",
             "script-src 'self'",
             "style-src 'self'",
-            f"img-src 'self' {storage_origin} blob: data:",
+            f"img-src 'self' {storage_origin}",
             "connect-src 'self'",
             "object-src 'none'",
             "base-uri 'none'",
@@ -46,6 +46,27 @@ def create_app(settings: Settings, store: Store) -> FastAPI:
     app = FastAPI(title="gyazo-clone API", docs_url=None, redoc_url=None, openapi_url=None)
     csp = build_csp(settings.blob_public_endpoint)
 
+    def is_owner(key: str | None) -> bool:
+        # Constant-time compare: no timing oracle on the key.
+        return bool(key) and hmac.compare_digest(key.encode(), settings.owner_api_key.encode())
+
+    # Multipart bodies are parsed (and spooled to disk) before route dependencies run, so the
+    # key and size checks for /upload must happen here, before the body is read at all.
+    # Registered before security_headers, so these early responses still get the headers.
+    body_limit = settings.max_upload_bytes + 64 * 1024  # file cap + multipart overhead
+
+    @app.middleware("http")
+    async def upload_guard(request: Request, call_next: Callable):
+        if request.method == "POST" and request.url.path == "/upload":
+            if not is_owner(request.headers.get("x-api-key")):
+                return JSONResponse({"detail": "invalid or missing API key"}, status_code=401)
+            length = request.headers.get("content-length")
+            if length is None or not length.isdigit():
+                return JSONResponse({"detail": "Content-Length required"}, status_code=411)
+            if int(length) > body_limit:
+                return JSONResponse({"detail": "file too large"}, status_code=413)
+        return await call_next(request)
+
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable):
         response = await call_next(request)
@@ -58,10 +79,8 @@ def create_app(settings: Settings, store: Store) -> FastAPI:
         return store
 
     def require_owner(x_api_key: Annotated[str | None, Header()] = None) -> None:
-        # Constant-time compare: no timing oracle on the key.
-        if not x_api_key or not hmac.compare_digest(
-            x_api_key.encode(), settings.owner_api_key.encode()
-        ):
+        # Defence in depth: upload_guard already checked; this keeps the route safe on its own.
+        if not is_owner(x_api_key):
             raise HTTPException(status_code=401, detail="invalid or missing API key")
 
     @app.get("/healthz")
@@ -101,13 +120,22 @@ def create_app(settings: Settings, store: Store) -> FastAPI:
         log.info("uploaded id=%s type=%s size=%d", image_id, content_type, len(data))
         return {"id": image_id, "url": f"{settings.public_base_url}/i/{image_id}"}
 
+    def signed(s: Store, name: str) -> str:
+        # In Azure, signing needs a user-delegation key from Entra; if that call fails the
+        # image isn't gone, the dependency is: 503 (retryable), not a bare 500.
+        try:
+            return s.sign_read_url(name)
+        except Exception:
+            log.exception("could not sign SAS for %s", name)
+            raise HTTPException(status_code=503, detail="storage temporarily unavailable") from None
+
     @app.get("/i/{image_id}")
     def view(image_id: str, s: Annotated[Store, Depends(get_store)]) -> RedirectResponse:
         if not is_valid_id(image_id) or s.get_record(image_id) is None:
             raise HTTPException(status_code=404, detail="not found")
         # Bytes never stream through the API: 302 to a short-lived read-only SAS (D-004).
         return RedirectResponse(
-            s.sign_read_url(blob_name(image_id)),
+            signed(s, blob_name(image_id)),
             status_code=302,
             headers={"Cache-Control": "no-store"},
         )
@@ -125,7 +153,7 @@ def create_app(settings: Settings, store: Store) -> FastAPI:
             "width": record.width,
             "height": record.height,
             "url": f"{settings.public_base_url}/i/{record.id}",
-            "thumbnail_url": s.sign_read_url(record.thumb_blob) if record.thumb_blob else None,
+            "thumbnail_url": signed(s, record.thumb_blob) if record.thumb_blob else None,
         }
 
     if settings.static_dir and settings.static_dir.is_dir():

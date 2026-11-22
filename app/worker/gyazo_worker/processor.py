@@ -12,9 +12,11 @@ from typing import Protocol
 
 from PIL import Image
 
-# Decompression-bomb guard: refuse images above ~40 MP (Pillow raises DecompressionBombError
-# at 2x this). A 10 MB upload cap alone doesn't bound decoded size.
-Image.MAX_IMAGE_PIXELS = 40_000_000
+# Decompression-bomb guard. A 10 MB upload cap doesn't bound decoded size: a tiny PNG can
+# declare 100+ MP. Pillow only *warns* between MAX_IMAGE_PIXELS and 2x, so we enforce our
+# own hard limit from the header, before any pixels are decoded.
+MAX_PIXELS = 40_000_000
+Image.MAX_IMAGE_PIXELS = MAX_PIXELS  # Pillow's own error still applies above 2x
 THUMB_MAX_PX = 320
 
 
@@ -38,6 +40,8 @@ class ThumbnailProcessor:
     def process(self, data: bytes) -> ProcessResult:
         try:
             with Image.open(io.BytesIO(data)) as probe:
+                if probe.width * probe.height > MAX_PIXELS:  # header only, nothing decoded
+                    raise InvalidImageError(f"too many pixels: {probe.width}x{probe.height}")
                 probe.verify()  # structural check; the image must be reopened afterwards
             with Image.open(io.BytesIO(data)) as img:
                 width, height, fmt = img.width, img.height, img.format or "unknown"

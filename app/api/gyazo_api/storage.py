@@ -24,7 +24,7 @@ from azure.storage.blob import (
     UserDelegationKey,
     generate_blob_sas,
 )
-from azure.storage.queue import QueueServiceClient, TextBase64EncodePolicy
+from azure.storage.queue import QueueClient, TextBase64EncodePolicy
 
 from .config import Settings
 
@@ -77,11 +77,15 @@ class AzureStore:
             cred = DefaultAzureCredential()
         self._blob_svc = BlobServiceClient(s.blob_endpoint, credential=cred)
         self._container = self._blob_svc.get_container_client(s.container)
-        # Queue encoding is pinned explicitly in both producer and consumer (D-019)
-        # so they can't drift: base64 text, the Azure Functions/portal-friendly default.
-        self._queue = QueueServiceClient(
-            s.queue_endpoint, credential=cred, message_encode_policy=TextBase64EncodePolicy()
-        ).get_queue_client(s.queue)
+        # Queue encoding is pinned explicitly in producer and consumer so they can't drift
+        # (D-020). QueueClient is built directly: QueueServiceClient.get_queue_client() does
+        # NOT pass message_encode_policy through, which silently sent plain text before.
+        self._queue = QueueClient(
+            s.queue_endpoint,
+            s.queue,
+            credential=cred,
+            message_encode_policy=TextBase64EncodePolicy(),
+        )
         self._table = TableServiceClient(s.table_endpoint, credential=cred).get_table_client(
             s.table
         )

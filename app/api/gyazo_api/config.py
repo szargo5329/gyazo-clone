@@ -20,13 +20,19 @@ def _env(name: str, default: str | None = None) -> str:
     return value
 
 
+MIN_KEY_LENGTH = 16
+
+
 def _owner_key() -> str:
     # In AKS the key is a file mounted by the Secrets Store CSI driver (D-001);
     # locally it can be an env var. The file wins so the secret never sits in env.
     path = os.environ.get("OWNER_API_KEY_FILE")
-    if path:
-        return Path(path).read_text(encoding="utf-8").strip()
-    return _env("OWNER_API_KEY")
+    key = Path(path).read_text(encoding="utf-8").strip() if path else _env("OWNER_API_KEY")
+    # Fail loudly at startup rather than silently rejecting every upload (empty file)
+    # or accepting a guessable key.
+    if len(key) < MIN_KEY_LENGTH:
+        raise RuntimeError(f"owner API key must be at least {MIN_KEY_LENGTH} characters")
+    return key
 
 
 @dataclass(frozen=True)

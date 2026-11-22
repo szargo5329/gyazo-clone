@@ -9,9 +9,12 @@ Failures:
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import os
+import re
 import signal
 import time
 from dataclasses import dataclass
@@ -48,46 +51,70 @@ class Backend(Protocol):
     def update_record(self, image_id: str, fields: dict[str, Any]) -> None: ...
 
 
+def _give_up(job: Job, backend: Backend, error: str) -> str:
+    backend.update_record(job.image_id, {"status": "failed", "error": error})
+    backend.delete(job)
+    return "failed"
+
+
 def handle(job: Job, backend: Backend, processor: Processor) -> str:
-    """Process one job. Returns the outcome for logs/tests: done | failed | retry."""
+    """Process one job. Returns the outcome for logs/tests: done | failed | retry.
+
+    Never raises: any error either retries (job reappears after the visibility timeout)
+    or, past MAX_ATTEMPTS, marks the image failed. A crash here would kill the worker.
+    """
     image_id = job.image_id
     try:
-        result = processor.process(backend.download(blob_name(image_id)))
-    except InvalidImageError as e:
-        log.warning("invalid image id=%s: %s", image_id, e)
-        backend.update_record(image_id, {"status": "failed", "error": "invalid image"})
+        # Checked before any work: a job that keeps killing the process (e.g. OOM)
+        # never reaches an except block, but its dequeue count still climbs.
+        if job.dequeue_count > MAX_ATTEMPTS:
+            log.error("poison job id=%s dequeued %d times", image_id, job.dequeue_count)
+            return _give_up(job, backend, "too many attempts")
+        try:
+            result = processor.process(backend.download(blob_name(image_id)))
+        except InvalidImageError as e:
+            log.warning("invalid image id=%s: %s", image_id, e)
+            return _give_up(job, backend, "invalid image")
+        backend.upload_thumbnail(thumb_blob_name(image_id), result.thumbnail)
+        backend.update_record(
+            image_id,
+            {
+                "status": "ready",
+                "width": result.width,
+                "height": result.height,
+                "format": result.format,
+                "thumb_blob": thumb_blob_name(image_id),
+            },
+        )
         backend.delete(job)
-        return "failed"
     except Exception:
         if job.dequeue_count >= MAX_ATTEMPTS:
             log.exception("giving up id=%s after %d attempts", image_id, job.dequeue_count)
-            backend.update_record(image_id, {"status": "failed", "error": "processing error"})
-            backend.delete(job)
-            return "failed"
+            try:
+                return _give_up(job, backend, "processing error")
+            except Exception:
+                log.exception("could not mark id=%s failed; it will be retried", image_id)
+                return "retry"
         log.exception("transient failure id=%s attempt=%d", image_id, job.dequeue_count)
         return "retry"
-    backend.upload_thumbnail(thumb_blob_name(image_id), result.thumbnail)
-    backend.update_record(
-        image_id,
-        {
-            "status": "ready",
-            "width": result.width,
-            "height": result.height,
-            "format": result.format,
-            "thumb_blob": thumb_blob_name(image_id),
-        },
-    )
-    backend.delete(job)
     log.info("processed id=%s %dx%d", image_id, result.width, result.height)
     return "done"
 
 
+_ID = re.compile(r"^[0-9A-Za-z]{22}$")  # same shape as the API's image IDs
+
+
 def parse_message(content: str) -> str | None:
+    """Decode a base64 JSON job {"id": ...} (D-020). Returns None for anything malformed.
+
+    Decoding happens here, not in the SDK's decode policy, so one bad message can be
+    dropped on its own instead of failing the whole receive batch.
+    """
     try:
-        image_id = json.loads(content)["id"]
-    except (ValueError, KeyError, TypeError):
+        image_id = json.loads(base64.b64decode(content, validate=True))["id"]
+    except (ValueError, KeyError, TypeError, binascii.Error):
         return None
-    return image_id if isinstance(image_id, str) and image_id.isalnum() else None
+    return image_id if isinstance(image_id, str) and _ID.match(image_id) else None
 
 
 class AzureBackend:
@@ -95,11 +122,7 @@ class AzureBackend:
         from azure.core.credentials import AzureNamedKeyCredential
         from azure.data.tables import TableServiceClient, UpdateMode
         from azure.storage.blob import BlobServiceClient
-        from azure.storage.queue import (
-            QueueServiceClient,
-            TextBase64DecodePolicy,
-            TextBase64EncodePolicy,
-        )
+        from azure.storage.queue import QueueClient, TextBase64EncodePolicy
 
         env = os.environ
         account = env["STORAGE_ACCOUNT_NAME"]
@@ -115,13 +138,15 @@ class AzureBackend:
         self._container = BlobServiceClient(blob_ep, credential=cred).get_container_client(
             env.get("STORAGE_CONTAINER", "images")
         )
-        # Same encoding as the API producer (D-019).
-        self._queue = QueueServiceClient(
+        # Same base64 encoding as the API producer (D-020); QueueClient built directly
+        # because get_queue_client() drops the encode policy. No decode policy: raw text is
+        # decoded per message in parse_message, so one bad message can't break a batch.
+        self._queue = QueueClient(
             queue_ep,
+            env.get("STORAGE_QUEUE", "image-jobs"),
             credential=cred,
             message_encode_policy=TextBase64EncodePolicy(),
-            message_decode_policy=TextBase64DecodePolicy(),
-        ).get_queue_client(env.get("STORAGE_QUEUE", "image-jobs"))
+        )
         self._table = TableServiceClient(table_ep, credential=cred).get_table_client(
             env.get("STORAGE_TABLE", "images")
         )
