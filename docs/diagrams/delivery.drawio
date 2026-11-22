@@ -18,13 +18,13 @@
           <mxGeometry x="230" y="104" width="64" height="64" as="geometry" />
         </mxCell>
         <mxCell id="act" value='&lt;b&gt;GitHub Actions · PR checks&lt;/b&gt; (required on main)&lt;br&gt;&lt;font style="font-size:11px" color="#666666"&gt;terraform fmt / validate / tflint · plan&lt;br&gt;python ruff / pytest · web lint / test / build&lt;br&gt;e2e compose smoke · actionlint · checkov · gitleaks&lt;br&gt;SHA-pinned actions + Dependabot&lt;/font&gt;' style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="350" y="96" width="320" height="110" as="geometry" />
+          <mxGeometry x="380" y="96" width="320" height="110" as="geometry" />
         </mxCell>
-        <mxCell id="img" value='&lt;b&gt;Image build + push&lt;/b&gt;&lt;br&gt;&lt;font style="font-size:11px" color="#999999"&gt;API + worker [M3]&lt;/font&gt;' style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;dashed=1;fontColor=#999999;" vertex="1" parent="1">
-          <mxGeometry x="710" y="121" width="140" height="60" as="geometry" />
+        <mxCell id="img" value='&lt;b&gt;Image build + push&lt;/b&gt;&lt;br&gt;&lt;font style="font-size:11px" color="#999999"&gt;API [M3] · worker [M4]&lt;/font&gt;' style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;dashed=1;fontColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="730" y="121" width="135" height="60" as="geometry" />
         </mxCell>
         <mxCell id="acr" value="acrgyazodev&amp;lt;sfx&amp;gt; [M3]" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;opacity=45;fontColor=#999999;image=img/lib/azure2/containers/Container_Registries.svg;whiteSpace=nowrap;" vertex="1" parent="1">
-          <mxGeometry x="890" y="126" width="56" height="50" as="geometry" />
+          <mxGeometry x="895" y="126" width="56" height="50" as="geometry" />
         </mxCell>
         <mxCell id="tag" value='&lt;b&gt;Helm chart [M5]&lt;/b&gt;&lt;br&gt;&lt;font style="font-size:11px" color="#999999"&gt;tag-bump commit [M6]&lt;/font&gt;' style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;dashed=1;fontColor=#999999;" vertex="1" parent="1">
           <mxGeometry x="1080" y="110" width="170" height="60" as="geometry" />
@@ -93,7 +93,7 @@
         <mxCell id="l2" value="Observability (planned)" style="swimlane;horizontal=0;startSize=34;html=1;fontStyle=1;fontSize=13;fillColor=#f8f9fb;strokeColor=#b0b8c4;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
           <mxGeometry x="40" y="690" width="1220" height="320" as="geometry" />
         </mxCell>
-        <mxCell id="pods" value='API + worker pods [M3]&lt;br&gt;&lt;font style="font-size:11px" color="#999999"&gt;/metrics · OTel SDK · JSON logs&lt;/font&gt;' style="aspect=fixed;sketch=0;html=1;dashed=0;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;fillColor=#2875E2;strokeColor=#ffffff;shape=mxgraph.kubernetes.icon2;prIcon=pod;opacity=45;fontColor=#999999;" vertex="1" parent="1">
+        <mxCell id="pods" value='API [M3] + worker [M4] pods&lt;br&gt;&lt;font style="font-size:11px" color="#999999"&gt;/metrics · OTel SDK · JSON logs&lt;/font&gt;' style="aspect=fixed;sketch=0;html=1;dashed=0;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;fillColor=#2875E2;strokeColor=#ffffff;shape=mxgraph.kubernetes.icon2;prIcon=pod;opacity=45;fontColor=#999999;" vertex="1" parent="1">
           <mxGeometry x="160" y="820" width="50" height="48" as="geometry" />
         </mxCell>
         <mxCell id="otel" value='&lt;b&gt;OTel Collector [M4]&lt;/b&gt;&lt;br&gt;&lt;font style="font-size:11px" color="#999999"&gt;receives and routes&lt;/font&gt;' style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontColor=#999999;" vertex="1" parent="1">
