@@ -64,7 +64,7 @@ Known gaps (each has an owner and a trigger):
 
 ### M2 — in review (2026-11-21)
 Evidence (verified locally; CI evidence comes with the PR):
-- `uv run pytest -q`: 81 passed (API routes, auth, the early upload guard, validation, CSP headers, SAS shape, the Entra signer with a stubbed key service: caching, refresh, `skoid`/`sktid`, TTL; worker processing, crash/poison/OOM paths, the 40 MP bomb cap, queue encoding on both clients). `npm test`: 12 passed.
+- `uv run pytest -q`: 82 passed (API routes, auth, the early upload guard, validation, CSP headers, SAS shape, the Entra signer with a stubbed key service: caching, refresh, `skoid`/`sktid`, TTL; worker processing, crash/poison/OOM/deleted-record paths, the 40 MP bomb cap, queue encoding on both clients). `npm test`: 12 passed.
 - `scripts/smoke.py` against `docker compose` (Azurite + API + worker): 15/15 checks. Bad key → 401, non-image → 415, upload → 201, worker → ready with a 320×160 WebP thumbnail, `/i/<id>` → 302 to a SAS returning identical bytes, tampered SAS → 403, unknown id → 404, strict CSP.
 - Real browser (desktop app pane): paste → link → thumbnail, with no console or CSP errors. Screenshots: `docs/diagrams/ui-m2-*.jpg`.
 - `vite build` output has no inline scripts or styles (`scripts/check-csp.mjs`, negative-tested).

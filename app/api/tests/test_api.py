@@ -14,7 +14,7 @@ from gyazo_api.images import ID_LENGTH, is_valid_id, new_image_id, sniff_image_t
 from gyazo_api.main import create_app
 from gyazo_api.storage import ImageRecord
 
-KEY = "test-owner-key-0123456789"
+KEY = "fake" * 5  # obviously fake, low entropy: not a secret (and gitleaks agrees)
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
 GIF = b"GIF89a" + b"\x00" * 32
@@ -304,8 +304,8 @@ def test_upload_guard_requires_content_length(client):
 
 
 def test_401_does_not_echo_the_key(client):
-    r = upload(client, PNG, key="wrong-key-guess-123")
-    assert KEY not in r.text and "wrong-key-guess-123" not in r.text
+    r = upload(client, PNG, key="wrong" * 4)
+    assert KEY not in r.text and "wrong" * 4 not in r.text
     assert KEY not in str(r.headers)
 
 

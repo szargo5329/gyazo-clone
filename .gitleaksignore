@@ -1,0 +1,4 @@
+# Fake test keys in an intermediate PR #9 commit (replaced by low-entropy fakes in the
+# next commit). Fingerprint-scoped: only these exact findings are ignored.
+40757aa0eb0c53d3de16525f29bb34e367884bc9:app/api/tests/test_api.py:generic-api-key:17
+40757aa0eb0c53d3de16525f29bb34e367884bc9:app/api/tests/test_api.py:generic-api-key:307
