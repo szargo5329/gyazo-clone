@@ -114,9 +114,9 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 
 ## D-017 Cost budget created manually, outside Terraform — Accepted
 - **Context:** The project runs for about a week, then is torn down. A spend alarm must exist before any billable compute (AKS, M3) is created.
-- **Decision:** A $50/month budget with an email alert at 50% of actual spend, created by the owner in the Azure portal at billing-account scope. It is **not** in Terraform and is not destroyed by teardown.
+- **Decision:** A $50/month budget with an email alert at 50% of actual spend, created by the owner in the Azure portal at billing-account scope. It is **not** in Terraform and is not destroyed by teardown. Billing-account scope means it is account-wide: it also counts any non-project spend on the account. Recipient: the owner. Only one threshold (50%) exists today; a 90-100% threshold would give a later warning and should be added in the portal.
 - **Alternatives:**
-  - `azurerm_consumption_budget_subscription` in bootstrap: reproducible, but the CI identities have no subscription-scope rights, so it would be human-applied anyway, and teardown would delete the alarm along with the resources it watches.
+  - `azurerm_consumption_budget_subscription` in bootstrap: reproducible, but the CI identities have no subscription-scope rights, so it would be human-applied anyway, so the identity plane offers no automation benefit. (Putting it in the main config instead would mean teardown deletes the alarm.)
   - `azurerm_consumption_budget_resource_group` in the main config: misses spend outside `rg-gyazo-dev` (state account, AKS node resource group `MC_*`).
-- **Trade-off:** Not reproducible from code, so it's recorded here and checked by hand. A budget only alerts; it never stops spending. Hard stops are `az aks stop` and the documented teardown.
+- **Trade-off:** Not reproducible from code, so it's recorded here and checked by hand. A budget only alerts; it never stops spending. The manual stops are `az aks stop` (which does not halt disk, ACR, storage or public IP costs) and the documented teardown.
 - **Verify:** Portal → Cost Management → Budgets shows the $50 budget and its alert recipient.
