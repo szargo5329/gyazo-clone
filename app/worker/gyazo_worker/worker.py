@@ -20,6 +20,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from azure.core.exceptions import ResourceNotFoundError
+
 from .processor import InvalidImageError, Processor, ThumbnailProcessor
 
 log = logging.getLogger("gyazo_worker")
@@ -92,6 +94,12 @@ def handle(job: Job, backend: Backend, processor: Processor) -> str:
             log.exception("giving up id=%s after %d attempts", image_id, job.dequeue_count)
             try:
                 return _give_up(job, backend, "processing error")
+            except ResourceNotFoundError:
+                # The record is gone (deleted image): nothing to mark, just drop the job,
+                # or it would retry forever.
+                log.warning("record id=%s no longer exists; dropping job", image_id)
+                backend.delete(job)
+                return "failed"
             except Exception:
                 log.exception("could not mark id=%s failed; it will be retried", image_id)
                 return "retry"

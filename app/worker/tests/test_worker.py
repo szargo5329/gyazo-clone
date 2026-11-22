@@ -214,3 +214,18 @@ def test_worker_queue_client_keeps_encoding_and_parses_api_messages(monkeypatch)
     producer = TextBase64EncodePolicy()
     producer.configure(require_encryption=False, key_encryption_key=None, resolver=None)
     assert parse_message(producer(f'{{"id": "{VALID_ID}"}}')) == VALID_ID
+
+
+def test_handle_drops_job_whose_record_was_deleted():
+    """Past MAX_ATTEMPTS with the table record gone: delete the job instead of looping."""
+    from azure.core.exceptions import ResourceNotFoundError
+
+    class GoneRecord(FakeBackend):
+        def update_record(self, image_id, fields):
+            raise ResourceNotFoundError("entity not found")
+
+    backend = GoneRecord({})
+    backend.fail_download = True
+    job = Job("abc", MAX_ATTEMPTS, raw=None)
+    assert handle(job, backend, ThumbnailProcessor()) == "failed"
+    assert backend.deleted == [job]
