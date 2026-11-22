@@ -11,7 +11,7 @@ import sys
 
 # Per-call limit stays well under the hook's 180s budget (settings.json), so a slow step
 # is reported back as a problem (exit 2) instead of the harness killing the hook silently.
-TIMEOUT_S = 55
+TIMEOUT_S = 40  # up to 4 calls (fmt, init, validate, tflint): 160s < 180s
 
 
 def run(args: list[str], cwd: pathlib.Path) -> subprocess.CompletedProcess:
