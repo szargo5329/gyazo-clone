@@ -83,7 +83,7 @@ Known gaps:
 | Docker base images pinned by tag, not digest; no image scan yet. | orchestrator | M3 |
 | Upload isn't atomic: if the table insert or enqueue fails after the blob write, an orphan blob (or a `pending` record with no job) is left. | orchestrator | M4 (janitor/expiry with the queue work) |
 | The early body-size check trusts `Content-Length`; a lying client is still cut off at cap+1 bytes in the route, but Starlette may spool up to the real body. | orchestrator | M3 (gateway request-size limit) |
-| No alerting on stuck jobs: a poison job retried about 2,300 times unnoticed (see lesson). Need an alert on queue message age / dequeue count. | orchestrator | M7 (observability) |
+| No alerting on stuck jobs: a poison job retried about 2,300 times unnoticed (see lesson). Need an alert on queue message age / dequeue count. | orchestrator | M4 (SLO + alerts) |
 
 Lesson: the local compose stack had been running images built before the reviewer fixes landed, so a stale test job (fake id, no record) retried about 2,300 times over roughly a day and a half on the old worker. **Verified (compose log, 2026-11-23):** after `docker compose up -d --build`, the worker on `main` logged "no longer exists; dropping job" on the first pass and did not see the job again past the 60 s visibility window (the deleted-record path from D-020). Local stacks need a rebuild after pulling; `docs/local-dev.md` now says so.
 
