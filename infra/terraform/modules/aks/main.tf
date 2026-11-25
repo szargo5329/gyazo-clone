@@ -40,7 +40,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   #checkov:skip=CKV_AZURE_116:Azure Policy add-on runs extra pods on a single small node; admission control is out of scope for the demo (D-021).
   #checkov:skip=CKV_AZURE_170:Free control-plane tier by design (cost, no SLA needed, D-021).
   #checkov:skip=CKV_AZURE_226:Standard_D2s_v6 has no ephemeral OS disk support (D-013, D-021).
-  #checkov:skip=CKV_AZURE_227:Encryption at host needs the EncryptionAtHost subscription feature registered (a subscription change); deferred, platform-managed disk encryption applies (D-021).
+  #checkov:skip=CKV_AZURE_227:Encryption at host needs the EncryptionAtHost subscription feature (a subscription change), deferred. Residual risk (D-021): node temp disk and caches (emptyDir, where uploads may buffer) are NOT host-encrypted; only the managed OS disk has platform encryption.
   #checkov:skip=CKV_AZURE_232:Single system pool by design (cost, D-021); app pods must schedule on it, so it can't be tainted CriticalAddonsOnly.
   name                = "aks-gyazo-${var.env}"
   resource_group_name = var.resource_group_name
@@ -59,6 +59,10 @@ resource "azurerm_kubernetes_cluster" "this" {
   # No static kubeconfig credentials: Entra ID auth + Azure RBAC only. The owner's
   # AKS RBAC Cluster Admin role is granted at RG scope in infra/bootstrap.
   local_account_disabled = true
+
+  # `az aks command invoke` runs through ARM, so it bypasses the authorized IP
+  # ranges below. Disabled so the API server allowlist can't be sidestepped (D-021).
+  run_command_enabled = false
 
   # azurerm 5.14 requires tenant_id or admin_group_object_ids; no admin groups
   # (access is via Azure RBAC role assignments only).
@@ -113,15 +117,20 @@ resource "azurerm_kubernetes_cluster" "this" {
   # Single autoscaled system pool (D-021). No node_count: the autoscaler owns it.
   # No zones: single-zone demo, and zones can't be changed without a rebuild.
   default_node_pool {
-    name                 = "system"
-    vm_size              = var.node_vm_size
-    os_disk_type         = "Managed" # Dsv6 has no ephemeral OS disk support
-    vnet_subnet_id       = var.aks_subnet_id
-    auto_scaling_enabled = true
-    min_count            = var.node_min_count
-    max_count            = var.node_max_count
-    max_pods             = 250 # overlay default, set explicitly
-    tags                 = var.tags
+    name            = "system"
+    vm_size         = var.node_vm_size
+    os_disk_type    = "Managed" # Dsv6 has no ephemeral OS disk support
+    os_disk_size_gb = 64        # cost: default is 128 GB
+    vnet_subnet_id  = var.aks_subnet_id
+
+    # Lets changes to immutable pool properties (VM size, disk, max_pods, ...)
+    # rotate through a temporary pool instead of replacing the whole cluster.
+    temporary_name_for_rotation = "systemtmp"
+    auto_scaling_enabled        = true
+    min_count                   = var.node_min_count
+    max_count                   = var.node_max_count
+    max_pods                    = 250 # overlay default, set explicitly
+    tags                        = var.tags
 
     upgrade_settings {
       max_surge = "1"
