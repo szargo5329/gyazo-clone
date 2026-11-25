@@ -4,10 +4,18 @@
 # (including the state blob) with Entra ID tokens, which need explicit data roles.
 
 locals {
-  # Roles ci-apply may assign/delete in rg-<env> (the main config's workload identities
-  # need exactly these). Anything else, including Owner, Contributor, User Access
+  # Roles ci-apply may assign/delete in rg-<env> (the main config's identities need
+  # exactly these). Anything else, including Owner, Contributor, User Access
   # Administrator and RBAC Administrator, is denied by the ABAC condition below.
+  #
+  # Network Contributor is the one non-data-plane entry: the AKS control-plane
+  # user-assigned identity needs it on snet-aks and on the ingress public IP (D-011),
+  # and AKS only creates those assignments itself when driven by the az CLI.
+  # Trade-off: ci-apply can now grant network write (no data access) to any service
+  # principal in rg-<env>. It still can't grant to the CI identities or to users, and
+  # every apply stays behind the human-approved `apply` environment.
   delegable_role_names = toset([
+    "Network Contributor",
     "Storage Blob Data Contributor",
     "Storage Queue Data Message Sender",
     "Storage Queue Data Message Processor",
@@ -71,6 +79,17 @@ resource "azurerm_role_assignment" "human_state_blob_contributor" {
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = data.azurerm_client_config.current.object_id
   description          = "Operator who ran bootstrap: read/write/lease the Terraform state blob."
+}
+
+# AKS runs with local accounts disabled and Azure RBAC for Kubernetes authorization,
+# so the operator needs a Kubernetes RBAC role to use kubectl. Scoped to rg-<env> so it
+# survives cluster rebuilds. Granted here because ci-apply can't: the ABAC condition
+# only allows service principals as assignees.
+resource "azurerm_role_assignment" "human_aks_rbac_cluster_admin" {
+  scope                = azurerm_resource_group.env.id
+  role_definition_name = "Azure Kubernetes Service RBAC Cluster Admin"
+  principal_id         = data.azurerm_client_config.current.object_id
+  description          = "Operator who ran bootstrap: kubectl cluster-admin on AKS clusters in rg-<env> (Azure RBAC, local accounts off)."
 }
 
 # ---------------------------------------------------------------------------
