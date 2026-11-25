@@ -11,10 +11,13 @@ locals {
   # Network Contributor is the one non-data-plane entry: the AKS control-plane
   # user-assigned identity needs it on snet-aks and on the ingress public IP (D-011),
   # and AKS only creates those assignments itself when driven by the az CLI.
-  # Trade-off: ci-apply can now grant network write (no data access) to any service
-  # principal in rg-<env>. It still can't grant to the CI identities or to users, and
-  # every apply stays behind the human-approved `apply` environment.
-  # Network Contributor is for the AKS control-plane UAMI only, scoped to snet-aks and the gateway PIP; never rg scope, never the api/worker identities (ABAC can't enforce scope, so this is a review rule).
+  # Trade-off: ci-apply can now grant network write (no data-plane or role-assignment
+  # rights; can alter network paths) to any service principal in rg-<env>. It still
+  # can't grant to the CI identities or to users, and every apply stays behind the
+  # human-approved `apply` environment.
+  # Review rule (ABAC can't enforce scope): Network Contributor is for the AKS
+  # control-plane UAMI only, scoped to snet-aks and the gateway PIP. Never rg scope,
+  # never the api/worker identities.
   delegable_role_names = toset([
     "Network Contributor",
     "Storage Blob Data Contributor",
