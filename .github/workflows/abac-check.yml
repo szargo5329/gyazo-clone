@@ -80,7 +80,9 @@ jobs:
           trap 'cleanup; exit 1' TERM INT
           try() { # try <expect: deny|allow> <label> <role> <assignee> <scope>
             local expect=$1 label=$2 role=$3 who=$4 scope=$5 id
-            if id=$(AZURE_CORE_ONLY_SHOW_ERRORS=1 az role assignment create --assignee-object-id "$who"                 --assignee-principal-type ServicePrincipal --role "$role" --scope "$scope"                 --query id -o tsv 2>"$errf"); then
+            if id=$(AZURE_CORE_ONLY_SHOW_ERRORS=1 az role assignment create --assignee-object-id "$who" \
+                --assignee-principal-type ServicePrincipal --role "$role" --scope "$scope" \
+                --query id -o tsv 2>"$errf"); then
               id=$(tail -n1 <<<"$id")
               if [[ ! "$id" =~ ^/subscriptions/ ]]; then
                 echo "::error::FAIL $label: created, but could not parse the id; check $scope manually"
