@@ -5,8 +5,12 @@ name: abac-check
 #   1. self-grant of an allowlisted role (AcrPull → ci-apply itself)  → must be DENIED
 #   2. grant of a non-allowlisted role (Reader → the api identity)     → must be DENIED
 #   3. control: allowlisted role to a workload identity (AcrPull → api) → must SUCCEED, then deleted
-# Any assignment a "must be denied" step manages to create is deleted immediately and the job fails.
-# Manual only; never triggered by pushes or PRs.
+# Check 3 is what proves the delegation exists at all: 1 and 2 would also be denied if the
+# RBAC Administrator assignment were missing. Created assignments are deleted (a trap also covers
+# cancel/timeout). If check 2 ever wrongly succeeds, ci-apply CANNOT delete the Reader assignment
+# (the condition only allows deleting allowlisted roles): the job prints its id for manual removal.
+# Check 3 assumes nothing else gives the api identity AcrPull on the ACR (M3 grants the kubelet, not api).
+# Manual only; never triggered by pushes or PRs, so deliberately not a required check.
 on:
   workflow_dispatch:
 
@@ -58,28 +62,43 @@ jobs:
           if [ -z "$self" ] || [ -z "$api" ] || [ -z "$acr" ]; then echo "lookup failed"; exit 1; fi
 
           fail=0
-          try() { # try <expect: deny|allow> <label> <role> <assignee> <scope>
-            local expect=$1 label=$2 role=$3 who=$4 scope=$5 out id
-            if out=$(az role assignment create --assignee-object-id "$who" \
-                --assignee-principal-type ServicePrincipal --role "$role" --scope "$scope" \
-                --query id -o tsv 2>&1); then
-              id=$out
-              if az role assignment delete --ids "$id" --output none; then
+          created=()
+          errf=$(mktemp)
+          cleanup() { # on any exit, including cancel/timeout: remove what this run created
+            local id
+            for id in "${created[@]}"; do
+              if az role assignment delete --ids "$id" --output none 2>/dev/null; then
                 echo "  (cleaned up $id)"
               else
-                echo "::error::CLEANUP FAILED for $id"; fail=1
+                echo "::error::CLEANUP FAILED, remove manually: az role assignment delete --ids $id"
+                fail=1
               fi
+            done
+            created=()
+          }
+          trap 'cleanup' EXIT
+          trap 'cleanup; exit 1' TERM INT
+          try() { # try <expect: deny|allow> <label> <role> <assignee> <scope>
+            local expect=$1 label=$2 role=$3 who=$4 scope=$5 id
+            if id=$(AZURE_CORE_ONLY_SHOW_ERRORS=1 az role assignment create --assignee-object-id "$who"                 --assignee-principal-type ServicePrincipal --role "$role" --scope "$scope"                 --query id -o tsv 2>"$errf"); then
+              id=$(tail -n1 <<<"$id")
+              if [[ ! "$id" =~ ^/subscriptions/ ]]; then
+                echo "::error::FAIL $label: created, but could not parse the id; check $scope manually"
+                fail=1; return
+              fi
+              created+=("$id")
               if [ "$expect" = allow ]; then echo "PASS $label: allowed as expected"
               else echo "::error::FAIL $label: was ALLOWED (escalation possible)"; fail=1; fi
+              cleanup
+            elif [ "$expect" = deny ] && grep -q "AuthorizationFailed" "$errf"; then
+              echo "PASS $label: denied (AuthorizationFailed)"
+              grep -q "ABAC condition" "$errf" && echo "  (message mentions the ABAC condition)"
             else
-              if [ "$expect" = deny ] && grep -q "AuthorizationFailed" <<<"$out"; then
-                echo "PASS $label: denied (AuthorizationFailed)"
-              else
-                echo "::error::FAIL $label: unexpected result"; echo "$out" | head -5; fail=1
-              fi
+              echo "::error::FAIL $label: unexpected result (RoleAssignmentExists = pre-existing, left untouched)"
+              head -5 "$errf"; fail=1
             fi
           }
-          try deny  "1 self-grant AcrPull"         AcrPull "$self" "$acr"
-          try deny  "2 non-allowlisted Reader"     Reader  "$api"  "$rg_id"
-          try allow "3 control AcrPull to api"     AcrPull "$api"  "$acr"
+          try deny  "1 self-grant AcrPull"                      AcrPull "$self" "$acr"
+          try deny  "2 non-allowlisted Reader"                  Reader  "$api"  "$rg_id"
+          try allow "3 control AcrPull to api (proves delegation)" AcrPull "$api"  "$acr"
           exit $fail

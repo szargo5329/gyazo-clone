@@ -56,7 +56,7 @@ Known gaps (each has an owner and a trigger):
 
 | Gap | Owner | Close by |
 |---|---|---|
-| ABAC negative test: acting as ci-apply, a role-assignment write targeting ci-apply itself should fail with 403 `AuthorizationFailed`. Design-verified only (security.md, "CI escalates"). Prepared: `.github/workflows/abac-check.yml` (manual run, `apply` gate). | owner runs it (IAM); orchestrator prepares it | Before the first M3 apply that creates role assignments |
+| ABAC negative test: acting as ci-apply, a role-assignment write targeting ci-apply itself should fail with 403 `AuthorizationFailed`. Design-verified only (security.md, "CI escalates"). Prepared, not yet run: `.github/workflows/abac-check.yml` (manual run, `apply` gate; deliberately not a required check because it never runs on PRs). Closes when a passing run ID is recorded here. | owner runs it (IAM); orchestrator prepares it | Before the first M3 apply that creates role assignments |
 | Destroy guard: neither the blocking path nor the `allow_destroy` override has run live; only the pass-through path has. | orchestrator | Before M9 teardown, at the latest |
 | ~~Budget alert at 50% only; a 90% actual-spend alert is pending (D-017).~~ Closed 2026-11-24: owner added the 90% actual alert to the $50 budget in the portal (owner-reported, not agent-verified). | owner (portal) | Closed before M3 |
 | ci-apply write path unproven: every CI apply so far was a no-op, so no write has run as ci-apply. | owner watches the first apply | First M3 apply with real changes |
