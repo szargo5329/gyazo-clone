@@ -14,6 +14,7 @@ locals {
   # Trade-off: ci-apply can now grant network write (no data access) to any service
   # principal in rg-<env>. It still can't grant to the CI identities or to users, and
   # every apply stays behind the human-approved `apply` environment.
+  # Network Contributor is for the AKS control-plane UAMI only, scoped to snet-aks and the gateway PIP; never rg scope, never the api/worker identities (ABAC can't enforce scope, so this is a review rule).
   delegable_role_names = toset([
     "Network Contributor",
     "Storage Blob Data Contributor",
@@ -139,7 +140,7 @@ resource "azurerm_role_assignment" "ci_apply_state_contributor" {
 # needs to read image bytes or secret values. Add a role only if an apply proves it's needed.
 
 # Lets the main config create the workload identities' role assignments, but only
-# for the allowlisted data-plane roles, only to service principals, and never to the CI
+# for the allowlisted roles, only to service principals, and never to the CI
 # identities themselves (no self-grant of image/secret access). It cannot grant
 # Owner/Contributor/RBAC admin. This *narrows* CI's power rather than eliminating it:
 # Contributor can still create resources that carry their own identity. Reviewed by a human
@@ -151,7 +152,7 @@ resource "azurerm_role_assignment" "ci_apply_rbac_admin" {
   principal_type       = "ServicePrincipal"
   condition_version    = "2.0"
   condition            = trimspace(local.rbac_admin_condition) # no trailing newline → no perpetual diff
-  description          = "Constrained delegation: assign/delete only allowlisted data-plane roles."
+  description          = "Constrained delegation: assign/delete only allowlisted roles."
 
   lifecycle {
     # The condition must contain bare role GUIDs, not full role definition resource IDs.
