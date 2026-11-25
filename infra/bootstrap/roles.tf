@@ -4,10 +4,22 @@
 # (including the state blob) with Entra ID tokens, which need explicit data roles.
 
 locals {
-  # Roles ci-apply may assign/delete in rg-<env> (the main config's workload identities
-  # need exactly these). Anything else, including Owner, Contributor, User Access
+  # Roles ci-apply may assign/delete in rg-<env> (the main config's identities need
+  # exactly these). Anything else, including Owner, Contributor, User Access
   # Administrator and RBAC Administrator, is denied by the ABAC condition below.
+  #
+  # Network Contributor is the one non-data-plane entry: the AKS control-plane
+  # user-assigned identity needs it on snet-aks and on the ingress public IP (D-011),
+  # and AKS only creates those assignments itself when driven by the az CLI.
+  # Trade-off: ci-apply can now grant network write (no data-plane or role-assignment
+  # rights; can alter network paths) to any service principal in rg-<env>. It still
+  # can't grant to the CI identities or to users, and every apply stays behind the
+  # human-approved `apply` environment.
+  # Review rule (ABAC can't enforce scope): Network Contributor is for the AKS
+  # control-plane UAMI only, scoped to snet-aks and the gateway PIP. Never rg scope,
+  # never the api/worker identities.
   delegable_role_names = toset([
+    "Network Contributor",
     "Storage Blob Data Contributor",
     "Storage Queue Data Message Sender",
     "Storage Queue Data Message Processor",
@@ -73,6 +85,17 @@ resource "azurerm_role_assignment" "human_state_blob_contributor" {
   description          = "Operator who ran bootstrap: read/write/lease the Terraform state blob."
 }
 
+# AKS runs with local accounts disabled and Azure RBAC for Kubernetes authorization,
+# so the operator needs a Kubernetes RBAC role to use kubectl. Scoped to rg-<env> so it
+# survives cluster rebuilds. Granted here because ci-apply can't: the ABAC condition
+# only allows service principals as assignees.
+resource "azurerm_role_assignment" "human_aks_rbac_cluster_admin" {
+  scope                = azurerm_resource_group.env.id
+  role_definition_name = "Azure Kubernetes Service RBAC Cluster Admin"
+  principal_id         = data.azurerm_client_config.current.object_id
+  description          = "Operator who ran bootstrap: kubectl cluster-admin on AKS clusters in rg-<env> (Azure RBAC, local accounts off)."
+}
+
 # ---------------------------------------------------------------------------
 # ci-plan: read-only. Runs on PR code (D-012), so the worst it can do is read.
 # ---------------------------------------------------------------------------
@@ -80,6 +103,18 @@ resource "azurerm_role_assignment" "human_state_blob_contributor" {
 resource "azurerm_role_assignment" "ci_plan_reader" {
   scope                = azurerm_resource_group.env.id
   role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+# azurerm's refresh of azurerm_kubernetes_cluster calls listClusterUserCredential, a POST
+# action that Reader lacks, so without this every PR plan would 403 once the cluster exists.
+# With Azure RBAC enabled it only returns a kubeconfig stub and gives no in-cluster rights.
+# RG scope because the cluster doesn't exist at bootstrap time and must survive rebuilds.
+# Design-verified; the first CI plan after the cluster exists proves it.
+resource "azurerm_role_assignment" "ci_plan_aks_cluster_user" {
+  scope                = azurerm_resource_group.env.id
+  role_definition_name = "Azure Kubernetes Service Cluster User Role"
   principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
   principal_type       = "ServicePrincipal"
 }
@@ -120,7 +155,7 @@ resource "azurerm_role_assignment" "ci_apply_state_contributor" {
 # needs to read image bytes or secret values. Add a role only if an apply proves it's needed.
 
 # Lets the main config create the workload identities' role assignments, but only
-# for the allowlisted data-plane roles, only to service principals, and never to the CI
+# for the allowlisted roles, only to service principals, and never to the CI
 # identities themselves (no self-grant of image/secret access). It cannot grant
 # Owner/Contributor/RBAC admin. This *narrows* CI's power rather than eliminating it:
 # Contributor can still create resources that carry their own identity. Reviewed by a human
@@ -132,7 +167,7 @@ resource "azurerm_role_assignment" "ci_apply_rbac_admin" {
   principal_type       = "ServicePrincipal"
   condition_version    = "2.0"
   condition            = trimspace(local.rbac_admin_condition) # no trailing newline → no perpetual diff
-  description          = "Constrained delegation: assign/delete only allowlisted data-plane roles."
+  description          = "Constrained delegation: assign/delete only allowlisted roles."
 
   lifecycle {
     # The condition must contain bare role GUIDs, not full role definition resource IDs.
