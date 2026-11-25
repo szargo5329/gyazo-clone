@@ -107,6 +107,18 @@ resource "azurerm_role_assignment" "ci_plan_reader" {
   principal_type       = "ServicePrincipal"
 }
 
+# azurerm's refresh of azurerm_kubernetes_cluster calls listClusterUserCredential, a POST
+# action that Reader lacks, so without this every PR plan would 403 once the cluster exists.
+# With Azure RBAC enabled it only returns a kubeconfig stub and gives no in-cluster rights.
+# RG scope because the cluster doesn't exist at bootstrap time and must survive rebuilds.
+# Design-verified; the first CI plan after the cluster exists proves it.
+resource "azurerm_role_assignment" "ci_plan_aks_cluster_user" {
+  scope                = azurerm_resource_group.env.id
+  role_definition_name = "Azure Kubernetes Service Cluster User Role"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
 resource "azurerm_role_assignment" "ci_plan_state_reader" {
   scope                = azurerm_storage_container.tfstate.id
   role_definition_name = "Storage Blob Data Reader"
