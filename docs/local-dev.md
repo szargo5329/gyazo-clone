@@ -22,6 +22,8 @@ python -c "import secrets; print('OWNER_API_KEY=' + secrets.token_urlsafe(32))" 
 docker compose up --build
 ```
 
+After pulling new code, rebuild (`docker compose up -d --build`): a running stack keeps the old images, so it won't have the latest fixes.
+
 Open http://localhost:8000, paste the key from `.env` into **API key** (it's kept in this browser's localStorage), then paste a screenshot (Ctrl+V), drop a file or click to choose one.
 
 End-to-end check (the same one CI runs):
@@ -36,7 +38,10 @@ uv run --all-packages python scripts/smoke.py
 
 1. Open `app/sharex/gyazo-clone-local.sxcu` in a text editor and replace `PASTE_YOUR_OWNER_API_KEY_HERE` with your key. Don't commit that edit.
 2. Double-click the file. ShareX imports it as a custom uploader.
-3. ShareX → Destinations → Image uploader → Custom image uploader. Screenshots now upload, and the `/i/<id>` link is copied to your clipboard.
+3. ShareX → Destinations → Image uploader → Custom image uploader.
+4. ShareX → After capture tasks → tick **Upload image to host**, and After upload tasks → **Copy URL to clipboard**. A fresh install may only save captures locally, and then nothing reaches the API (check `docker compose logs api` for `POST /upload`).
+
+Screenshots now upload, and the `/i/<id>` link is copied to your clipboard. `git status` will show the `.sxcu` as modified while it holds your key: leave it unstaged.
 
 ## Tests and lint
 

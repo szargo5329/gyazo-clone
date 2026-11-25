@@ -49,7 +49,7 @@ Cost control: AKS 1 small system node pool (+ autoscaler min 1), stop cluster (`
 Evidence:
 - No-op apply from `main` via CI (run 44968065880, manual `workflow_dispatch` on `main`): plan job, then the apply job behind the `apply` environment's required-reviewer gate. 0 added, 0 changed, 0 destroyed. The plan artifact's SHA-256 digest matched at upload and download.
 - CI `plan` via OIDC (PR run 44967945871), in the `plan` environment, whose `AZURE_CLIENT_ID` is the read-only `id-gyazo-ci-plan` (pr.yml).
-- Repo settings (not in Terraform; checked with `gh api` on 2026-11-21): `apply` environment requires reviewer szargo5329 and protected branches only (self-approval allowed: a solo-owner gate, not two-person review); `main` requires checks detect, actionlint, checkov, gitleaks, terraform fmt/validate/tflint and terraform plan (the two terraform checks were added on 2026-11-21 after review; a skipped job still satisfies a required check), linear history, no force push or deletion.
+- Repo settings (not in Terraform; checked with `gh api` on 2026-11-21): `apply` environment requires reviewer szargo5329 and protected branches only (self-approval allowed: a solo-owner gate, not two-person review); `main` requires checks detect, actionlint, checkov, gitleaks, terraform fmt/validate/tflint and terraform plan (the two terraform checks were added on 2026-11-21 after review; a skipped job still satisfies a required check; now 9, see M2), linear history, no force push or deletion.
 - Resources were created by the human-approved local applies (M1 PR #3; the table migration in D-015). The CI runs show convergence, not creation.
 
 Known gaps (each has an owner and a trigger):
@@ -60,14 +60,19 @@ Known gaps (each has an owner and a trigger):
 | Destroy guard: neither the blocking path nor the `allow_destroy` override has run live; only the pass-through path has. | orchestrator | Before M9 teardown, at the latest |
 | Budget alert at 50% only; a 90% actual-spend alert is pending (D-017). Created by the owner, not agent-verified. | owner (portal) | Before M3 creates AKS |
 | ci-apply write path unproven: every CI apply so far was a no-op, so no write has run as ci-apply. | owner watches the first apply | First M3 apply with real changes |
-| `setup-uv` / `setup-node` (bumped in #4) not yet exercised: python/web CI jobs skip until `app/` exists. | orchestrator | First M2 PR |
+| ~~`setup-uv` / `setup-node` (bumped in #4) not yet exercised: python/web CI jobs skip until `app/` exists.~~ Closed: python and web jobs ran green on PR #9 (head fe50d7f). | orchestrator | Closed in M2 |
 
-### M2 — in review (2026-11-21)
-Evidence (verified locally; CI evidence comes with the PR):
-- `uv run pytest -q`: 82 passed (API routes, auth, the early upload guard, validation, CSP headers, SAS shape, the Entra signer with a stubbed key service: caching, refresh, `skoid`/`sktid`, TTL; worker processing, crash/poison/OOM/deleted-record paths, the 40 MP bomb cap, queue encoding on both clients). `npm test`: 12 passed.
-- `scripts/smoke.py` against `docker compose` (Azurite + API + worker): 15/15 checks. Bad key → 401, non-image → 415, upload → 201, worker → ready with a 320×160 WebP thumbnail, `/i/<id>` → 302 to a SAS returning identical bytes, tampered SAS → 403, unknown id → 404, strict CSP.
-- Real browser (desktop app pane): paste → link → thumbnail, with no console or CSP errors. Screenshots: `docs/diagrams/ui-m2-*.jpg`.
-- `vite build` output has no inline scripts or styles (`scripts/check-csp.mjs`, negative-tested).
+### M2 — complete (2026-11-23)
+Code merged in PR #9 (6e3ea54); diagrams in PR #10 (20d7957).
+
+Evidence:
+- **Acceptance (verified, owner, 2026-11-23):** ShareX 22.4 with `app/sharex/gyazo-clone-local.sxcu` → `POST /upload` 201 → link copied → `GET /i/m5XeV3O06juIgQXPC7TfSw` 302 → image shown in the browser. API log shows both requests; `/api/images/<id>` reports `ready`, 158×55, with a thumbnail. ShareX needed "After capture tasks → Upload image to host" turned on (now in `docs/local-dev.md`).
+- **Verified (CI):** PR #9 head fe50d7f, all 9 checks green, including `e2e (compose + smoke)` (15/15).
+- **Verified (`gh api` required_status_checks, 2026-11-23):** all 9 are required on `main`. The three M2 jobs were made required: python lint/test and web lint/test/build because they are the app's only unit gates, and e2e because it is the only check that runs the services together.
+- **Verified (local + CI):** `uv run pytest -q`: 82 passed (API routes, auth, the early upload guard, validation, CSP headers, SAS shape, the Entra signer with a stubbed key service: caching, refresh, `skoid`/`sktid`, TTL; worker processing, crash/poison/OOM/deleted-record paths, the 40 MP bomb cap, queue encoding on both clients). `npm test`: 12 passed.
+- **Verified (local + CI):** `scripts/smoke.py` against `docker compose` (Azurite + API + worker): 15/15 checks. Bad key → 401, non-image → 415, upload → 201, worker → ready with a 320×160 WebP thumbnail, `/i/<id>` → 302 to a SAS returning identical bytes, tampered SAS → 403, unknown id → 404, strict CSP.
+- **Verified (local):** real browser (desktop app pane): paste → link → thumbnail, with no console or CSP errors. Screenshots: `docs/diagrams/ui-m2-*.jpg`.
+- **Verified (local + CI build):** `vite build` output has no inline scripts or styles (`scripts/check-csp.mjs`, negative-tested).
 
 Known gaps:
 
@@ -78,5 +83,7 @@ Known gaps:
 | Docker base images pinned by tag, not digest; no image scan yet. | orchestrator | M3 |
 | Upload isn't atomic: if the table insert or enqueue fails after the blob write, an orphan blob (or a `pending` record with no job) is left. | orchestrator | M4 (janitor/expiry with the queue work) |
 | The early body-size check trusts `Content-Length`; a lying client is still cut off at cap+1 bytes in the route, but Starlette may spool up to the real body. | orchestrator | M3 (gateway request-size limit) |
-| **Acceptance "ShareX upload → link works locally" not yet met.** Everything else in the M2 row is. | owner runs it once (see local-dev.md) | Before merging M2 is called done |
+| No alerting on stuck jobs: a poison job retried about 2,300 times unnoticed (see lesson). Need an alert on queue message age / dequeue count. | orchestrator | M4 (SLO + alerts) |
+
+Lesson: the local compose stack had been running images built before the reviewer fixes landed, so a stale test job (fake id, no record) retried about 2,300 times over roughly a day and a half on the old worker. **Verified (compose log, 2026-11-23):** after `docker compose up -d --build`, the worker on `main` logged "no longer exists; dropping job" on the first pass and did not see the job again past the 60 s visibility window (the deleted-record path from D-020). Local stacks need a rebuild after pulling; `docs/local-dev.md` now says so.
 
