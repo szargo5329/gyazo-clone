@@ -93,7 +93,7 @@ resource "azurerm_role_assignment" "human_aks_rbac_cluster_admin" {
   scope                = azurerm_resource_group.env.id
   role_definition_name = "Azure Kubernetes Service RBAC Cluster Admin"
   principal_id         = data.azurerm_client_config.current.object_id
-  description          = "Operator who ran bootstrap: kubectl cluster-admin on AKS clusters in rg-<env> (Azure RBAC, local accounts off)."
+  description          = "Operator who ran bootstrap: kubectl cluster-admin on AKS clusters in this env resource group (Azure RBAC, local accounts off)."
 }
 
 # ---------------------------------------------------------------------------
