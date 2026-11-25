@@ -33,6 +33,12 @@ resource "azurerm_role_assignment" "control_plane_gateway_pip" {
   principal_type       = "ServicePrincipal"
 }
 
+# Single source for the local-accounts setting, so the precondition on the cluster
+# can assert it (a precondition can't reference the resource's own attributes).
+locals {
+  local_account_disabled = true
+}
+
 resource "azurerm_kubernetes_cluster" "this" {
   #checkov:skip=CKV_AZURE_115:Public API server restricted by authorized IP ranges (D-007); a private cluster needs a jumpbox/VPN (cost).
   #checkov:skip=CKV_AZURE_117:Disks are encrypted at rest with platform-managed keys; a disk encryption set (CMK) adds Key Vault key management for no demo benefit (D-021).
@@ -58,7 +64,8 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   # No static kubeconfig credentials: Entra ID auth + Azure RBAC only. The owner's
   # AKS RBAC Cluster Admin role is granted at RG scope in infra/bootstrap.
-  local_account_disabled = true
+  # Guarded by a precondition below: do not change (D-021).
+  local_account_disabled = local.local_account_disabled
 
   # `az aks command invoke` runs through ARM, so it bypasses the authorized IP
   # ranges below. Disabled so the API server allowlist can't be sidestepped (D-021).
@@ -146,6 +153,11 @@ resource "azurerm_kubernetes_cluster" "this" {
     precondition {
       condition     = var.node_min_count <= var.node_max_count
       error_message = "node_min_count must not exceed node_max_count."
+    }
+
+    precondition {
+      condition     = local.local_account_disabled == true
+      error_message = "local_account_disabled must stay true. The security of ci-plan's Azure Kubernetes Service Cluster User Role and the owner's Azure RBAC grant depends on it: with local accounts enabled, listClusterUserCredential returns a usable (non-Entra) cluster credential (D-021)."
     }
   }
 
