@@ -1,0 +1,106 @@
+name: abac-check
+
+# Live test of the ci-apply constrained delegation (infra/bootstrap/roles.tf, docs/security.md
+# "CI escalates"). Runs AS id-gyazo-ci-apply, behind the `apply` environment's approval gate.
+#   1. self-grant of an allowlisted role (AcrPull → ci-apply itself)  → must be DENIED
+#   2. grant of a non-allowlisted role (Reader → the api identity)     → must be DENIED
+#   3. control: allowlisted role to a workload identity (AcrPull → api) → must SUCCEED, then deleted
+# Check 3 is what proves the delegation exists at all: 1 and 2 would also be denied if the
+# RBAC Administrator assignment were missing. Created assignments are deleted (a trap also covers
+# cancel/timeout). If check 2 ever wrongly succeeds, ci-apply CANNOT delete the Reader assignment
+# (the condition only allows deleting allowlisted roles): the job prints its id for manual removal.
+# Check 3 assumes nothing else gives the api identity AcrPull on the ACR (M3 grants the kubelet, not api).
+# Manual only; never triggered by pushes or PRs, so deliberately not a required check.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-dev # never overlaps a terraform apply
+  cancel-in-progress: false
+
+jobs:
+  abac:
+    name: abac check (ci-apply)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ vars.AZURE_TENANT_ID != '' && github.ref == 'refs/heads/main' }}
+    environment: apply
+    permissions:
+      id-token: write
+    env:
+      CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }} # `apply` environment var = id-gyazo-ci-apply
+      TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      RG: rg-gyazo-dev
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: log in as ci-apply (GitHub OIDC, no secrets)
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r .value)
+          echo "::add-mask::$token"
+          az login --service-principal -u "$CLIENT_ID" -t "$TENANT_ID" --federated-token "$token" \
+            --allow-no-subscriptions --output none
+          az account set --subscription "$SUBSCRIPTION_ID"
+
+      - name: run the three checks
+        run: |
+          set -uo pipefail
+          # Own object id from the access token's oid claim (no Graph permission needed).
+          payload=$(az account get-access-token --query accessToken -o tsv | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+          self=$(echo "$payload" | base64 -d | jq -r .oid)
+          api=$(az identity show -g "$RG" -n id-gyazo-api-dev --query principalId -o tsv)
+          acr=$(az acr list -g "$RG" --query "[0].id" -o tsv)
+          rg_id=$(az group show -n "$RG" --query id -o tsv)
+          if [ -z "$self" ] || [ -z "$api" ] || [ -z "$acr" ]; then echo "lookup failed"; exit 1; fi
+
+          fail=0
+          created=()
+          errf=$(mktemp)
+          cleanup() { # on any exit, including cancel/timeout: remove what this run created
+            local id
+            for id in "${created[@]}"; do
+              if az role assignment delete --ids "$id" --output none 2>/dev/null; then
+                echo "  (cleaned up $id)"
+              else
+                echo "::error::CLEANUP FAILED, remove manually: az role assignment delete --ids $id"
+                fail=1
+              fi
+            done
+            created=()
+          }
+          trap 'cleanup' EXIT
+          trap 'cleanup; exit 1' TERM INT
+          try() { # try <expect: deny|allow> <label> <role> <assignee> <scope>
+            local expect=$1 label=$2 role=$3 who=$4 scope=$5 id
+            if id=$(AZURE_CORE_ONLY_SHOW_ERRORS=1 az role assignment create --assignee-object-id "$who" \
+                --assignee-principal-type ServicePrincipal --role "$role" --scope "$scope" \
+                --query id -o tsv 2>"$errf"); then
+              id=$(tail -n1 <<<"$id")
+              if [[ ! "$id" =~ ^/subscriptions/ ]]; then
+                echo "::error::FAIL $label: created, but could not parse the id; check $scope manually"
+                fail=1; return
+              fi
+              created+=("$id")
+              if [ "$expect" = allow ]; then echo "PASS $label: allowed as expected"
+              else echo "::error::FAIL $label: was ALLOWED (escalation possible)"; fail=1; fi
+              cleanup
+            elif [ "$expect" = deny ] && grep -q "AuthorizationFailed" "$errf"; then
+              echo "PASS $label: denied (AuthorizationFailed)"
+              grep -q "ABAC condition" "$errf" && echo "  (message mentions the ABAC condition)"
+            else
+              echo "::error::FAIL $label: unexpected result (RoleAssignmentExists = pre-existing, left untouched)"
+              head -5 "$errf"; fail=1
+            fi
+          }
+          try deny  "1 self-grant AcrPull"                      AcrPull "$self" "$acr"
+          try deny  "2 non-allowlisted Reader"                  Reader  "$api"  "$rg_id"
+          try allow "3 control AcrPull to api (proves delegation)" AcrPull "$api"  "$acr"
+          exit $fail
