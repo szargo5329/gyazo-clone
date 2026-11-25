@@ -62,7 +62,7 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 
 ## D-011 DNS / TLS: public IP DNS label + Let's Encrypt HTTP-01 — Accepted with risk (researched 2026-11-20)
 - **Decision:** `<label>.centralus.cloudapp.azure.com`.
-  - Create the public IP with `domain_name_label` **in Terraform** and point the gateway's LoadBalancer Service at it (`azure-load-balancer-ipv4` + `azure-load-balancer-resource-group` annotations), so the hostname survives cluster rebuilds.
+  - Create the public IP with `domain_name_label` **in Terraform** and point the gateway's LoadBalancer Service at it (`azure-pip-name` + `azure-load-balancer-resource-group` annotations; by name rather than `azure-load-balancer-ipv4`, so the control plane's PIP-scoped grant is enough, see D-021), so the hostname survives cluster rebuilds.
   - cert-manager uses an HTTP-01 challenge through the same Gateway.
 - **Risk:** Let's Encrypt allows 50 certs per registered domain per week, shared globally. In 2024 `*.cloudapp.azure.com` users hit shared limits after Public Suffix List changes, and the current status is unconfirmed.
   - Develop against the **staging** issuer, request production once, and keep the cert Secret.
@@ -156,6 +156,10 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - **Nodes:** one autoscaled **system** pool, `Standard_D2s_v6` (D-013), min 1 / max 2 (variables), max surge 1, no zones, **managed** OS disk (Dsv6 has no ephemeral OS disk support). `max_pods = 250` (the overlay default, set explicitly). KEDA (M4) scales pods; the cluster autoscaler scales nodes, capped at 2 for cost.
   - **Control-plane identity:** user-assigned `id-gyazo-aks-<env>` with **Network Contributor** on the `snet-aks` subnet and on the gateway public IP (both `principal_type = ServicePrincipal`; the cluster `depends_on` both grants). The kubelet identity gets **AcrPull** on the registry. These roles are allowlisted for ci-apply in bootstrap.
   - **Gateway public IP (D-011):** `pip-gyazo-<env>`, Standard, Static, label `gyazo-<env>-<suffix>`, zone-redundant (zones set explicitly so a server-side default can't show up as a replacement). It lives in `modules/network`, in `rg-gyazo-<env>`, so the hostname survives cluster rebuilds.
+  - **Network policy:** Azure CNI Powered by Cilium on overlay: `network_data_plane = "cilium"` + `network_policy = "cilium"`. `advanced_networking` (ACNS) is left unset because it's paid.
+    - *Alternatives:* Azure NPM (Linux NPM retires 2028-09-30); Calico (the fallback if Cilium causes problems); no network policy (weak posture, pods can reach each other freely).
+    - *Consequences:* changing the dataplane later reimages every node, and some network-profile changes force cluster replacement. No FQDN or L7 policy (those are ACNS-only). For in-cluster traffic, write policies with `namespaceSelector` + `podSelector`, not `ipBlock`. Policies don't apply to `hostNetwork` pods. The Cilium agent takes roughly 200-400 MiB per node (estimate, to be checked with `kubectl top` after apply).
+    - *Sources:* learn.microsoft.com/azure/aks/use-network-policies, learn.microsoft.com/azure/aks/azure-cni-powered-by-cilium (researcher, 2026-11-24).
   - **ACR:** pinned to `role_assignment_mode = "LegacyRegistryPermissions"`. The ABAC "repository permissions" mode ignores AcrPull and is slated to become the default.
 - **Review rule (IAM):** Network Contributor (newly allowlisted for ci-apply) may be assigned **only** to the AKS control-plane UAMI, and **only** at the `snet-aks` and gateway-PIP resource scopes. Never at RG scope, and never to the api/worker identities. The ci-apply ABAC condition can't enforce a scope narrower than the RG, so the reviewer enforces this on every diff. The same rule is a comment next to both assignments in `modules/aks`.
 - **Alternatives:**
@@ -172,6 +176,5 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 - **Risks:**
   - Microsoft Learn says system pools should have ≥ 2 nodes for resilience. Min 1 conflicts with that guidance, and is accepted for cost. Upgrades surge to 2.
   - The PIP-scoped grant is **inferred**, not verified. If the cloud provider looks the IP up by address (`azure-load-balancer-ipv4` + `azure-load-balancer-resource-group`), it may need to list public IPs at RG scope. Mitigation: reference the IP by name (`service.beta.kubernetes.io/azure-pip-name`, a direct GET) in the M3 gateway Service. If that still fails, a broader grant is a **new owner decision**: the review rule above forbids RG scope as-is.
-  - Network policy is **not chosen yet** (checkov CKV_AZURE_7 skipped with a TODO in `modules/aks`). Open item: a researcher check on Cilium (`network_data_plane = "cilium"`) with overlay in azurerm 5.14 versus the alternatives, before the first app NetworkPolicy.
   - Encryption at host is off (needs the `EncryptionAtHost` subscription feature registration, a subscription change). Disks use platform-managed keys.
 

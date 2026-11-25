@@ -42,7 +42,6 @@ resource "azurerm_kubernetes_cluster" "this" {
   #checkov:skip=CKV_AZURE_226:Standard_D2s_v6 has no ephemeral OS disk support (D-013, D-021).
   #checkov:skip=CKV_AZURE_227:Encryption at host needs the EncryptionAtHost subscription feature registered (a subscription change); deferred, platform-managed disk encryption applies (D-021).
   #checkov:skip=CKV_AZURE_232:Single system pool by design (cost, D-021); app pods must schedule on it, so it can't be tainted CriticalAddonsOnly.
-  #checkov:skip=CKV_AZURE_7:Network policy engine not chosen yet (TODO(M3) in network_profile); decision pending research, see D-021 open item.
   name                = "aks-gyazo-${var.env}"
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -96,12 +95,14 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   # Azure CNI Overlay (D-007). VNet is 10.20.0.0/16; pod 10.244.0.0/16 and
   # service 10.0.0.0/16 overlap neither it nor each other.
-  # TODO(M3): choose a network policy engine (network_policy + network_data_plane,
-  # e.g. Cilium) after the researcher confirms overlay compatibility; checkov
-  # CKV_AZURE_7 is skipped until then.
+  # Azure CNI Powered by Cilium (D-021): Cilium dataplane enforces NetworkPolicy.
+  # Changing the dataplane later reimages every node. advanced_networking (ACNS,
+  # paid: FQDN/L7 policy, flow logs) is deliberately left unset.
   network_profile {
     network_plugin      = "azure"
     network_plugin_mode = "overlay"
+    network_data_plane  = "cilium"
+    network_policy      = "cilium"
     pod_cidr            = var.pod_cidr
     service_cidr        = var.service_cidr
     dns_service_ip      = var.dns_service_ip
