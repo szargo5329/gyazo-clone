@@ -17,5 +17,9 @@ resource "azurerm_container_registry" "this" {
   admin_enabled          = false # no username/password; pull/push via Entra RBAC only
   anonymous_pull_enabled = false
 
+  # Pinned (D-021): the ABAC "repository permissions" mode ignores AcrPull, which the
+  # AKS kubelet relies on, and is slated to become the default for new registries.
+  role_assignment_mode = "LegacyRegistryPermissions"
+
   tags = var.tags
 }

@@ -32,6 +32,7 @@ module "network" {
   source = "../../modules/network"
 
   env                 = var.env
+  suffix              = random_string.suffix.result
   resource_group_name = data.azurerm_resource_group.this.name
   location            = var.location
   tags                = local.tags
@@ -68,6 +69,20 @@ module "keyvault" {
   tags                = local.tags
 }
 
+# Depends on network + registry only; identity consumes its issuer URL, so there's no cycle.
+module "aks" {
+  source = "../../modules/aks"
+
+  env                  = var.env
+  resource_group_name  = data.azurerm_resource_group.this.name
+  location             = var.location
+  tenant_id            = data.azurerm_client_config.current.tenant_id
+  aks_subnet_id        = module.network.aks_subnet_id
+  gateway_public_ip_id = module.network.gateway_public_ip_id
+  acr_id               = module.registry.id
+  tags                 = local.tags
+}
+
 module "identity" {
   source = "../../modules/identity"
 
@@ -79,5 +94,6 @@ module "identity" {
   image_jobs_queue_id = module.storage.image_jobs_queue_id
   images_table_id     = module.storage.images_table_id
   key_vault_id        = module.keyvault.id
+  oidc_issuer_url     = module.aks.oidc_issuer_url
   tags                = local.tags
 }

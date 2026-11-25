@@ -8,6 +8,16 @@ variable "resource_group_name" {
   type        = string
 }
 
+variable "suffix" {
+  description = "Random lowercase alphanumeric suffix that makes the gateway DNS label globally unique."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{3,10}$", var.suffix))
+    error_message = "The suffix must be 3-10 lowercase letters/digits."
+  }
+}
+
 variable "location" {
   description = "Azure region."
   type        = string
@@ -29,6 +39,12 @@ variable "pe_subnet_prefix" {
   description = "Subnet reserved for private endpoints or the M8 runner VM; unused in M1."
   type        = string
   default     = "10.20.8.0/24"
+}
+
+variable "gateway_pip_zones" {
+  description = "Availability zones of the gateway public IP (zone-redundant by default). Changing it replaces the IP."
+  type        = list(string)
+  default     = ["1", "2", "3"]
 }
 
 variable "tags" {
