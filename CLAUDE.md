@@ -37,7 +37,7 @@ docs/             spec, decisions, diagrams/, runbooks
 - Pin provider and chart versions. Prefer AKS add-ons/managed options over self-installed when equivalent.
 - Branch per task, worktree per parallel task: `git worktree add ../gyazo-clone-<task> -b <type>/<task>` (`feat|infra|fix|docs|exp`). One writer per set of files.
 - Commits: conventional (`infra: add network module`). Small PRs; CI must be green.
-- Before reporting a PR ready: run the `reviewer` subagent on the diff and fix findings.
+- Before reporting a PR ready: run the `reviewer` subagent on the diff and fix findings. For changes under `app/` (and the M-AI processor), the orchestrator also runs the built-in `/security-review` (a slash command; subagents can't run it), puts its summary in the PR, and fixes each finding or records it in `docs/decisions.md` or the milestone known-gaps table.
 - After each milestone: retro — propose edits to this file, hooks, or skills; user approves.
 
 ## Agents (`.claude/agents/`)
@@ -49,6 +49,7 @@ docs/             spec, decisions, diagrams/, runbooks
 ## Orchestration rules (from the M1 lessons)
 - Researcher before any decision or unfamiliar API. Infra-writer makes Terraform/manifest edits; the orchestrator doesn't hand-edit IaC except trivial typos, and those still get reviewed.
 - **Any commit after the reviewer's last approval goes back to the reviewer**, including "small" fixes made during an apply.
+- **The last review before a merge or apply is a fresh reviewer** (a new agent, not a resumed one). Resumed reviewers are fine for checking fixes, but they remember the earlier diff and their own reasoning.
 - After any `.tf` edit, run the full suite (fmt, validate both roots, tflint, checkov) before committing, not just the check you think is relevant.
 - Auditor sign-off before presenting a plan for apply, a merge, or a milestone as done.
 - Live verification (apply, drift re-plan, CI OIDC run) is a required step: some bugs only show up there.
