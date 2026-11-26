@@ -47,6 +47,7 @@ Core scope (owner decision, 2026-11-25): the project shows cloud infrastructure 
 ## Later (only after M6, each optional)
 - Semantic search / RAG / agents over overviews (one model call per image is not RAG).
 - Private endpoints for storage/Key Vault (cost vs. security trade-off, see decisions). The M-AI privacy decision may pull this forward.
+- CDN (Azure Front Door, the CloudFront equivalent): skipped for now. Images are served through per-view SAS links that expire within 5 minutes, which a shared cache works against. The monthly base fee would also take most of the $50 budget for a one-user demo. Worth it at real scale with public or long-lived content.
 
 ## Success criteria (= definition of done)
 1. Clean subscription → running system using `infra/bootstrap`, `infra/terraform` and documented steps.
