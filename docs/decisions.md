@@ -146,3 +146,14 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 - **CI:** a new `e2e (compose + smoke)` job builds both images and runs `scripts/smoke.py` against Azurite + API + worker. Checkov now also scans Dockerfiles; `CKV_DOCKER_2` (HEALTHCHECK) is skipped inline, because Kubernetes uses probes. Gitleaks allowlists only Azurite's public dev key (`.gitleaks.toml`).
 - **Required checks (retro rule):** `python lint / test`, `web lint / test / build` and `e2e (compose + smoke)` become required on `main` once this PR is green. They always run now that `app/` exists.
 
+
+## D-023 App-security review: reviewer checklist plus `/security-review` on app PRs — Accepted
+- **Context:** The reviewer's checklist covered secrets, IAM, network exposure and cost, but had no app-level items. M-AI (D-022) adds untrusted model output to a page that holds the owner key in `localStorage`. The owner asked whether a separate security agent was needed (2026-11-25) and approved this instead.
+- **Decision:**
+  - The reviewer gets item 3a "App security": untrusted input, auth and disclosure per route, XSS/CSP and text-only rendering, injection/SSRF, SAS scope, prompt injection, dependencies and images (M3 timing), and rejected-case tests.
+  - For changes under `app/` and the M-AI processor, the orchestrator also runs the built-in `/security-review`. Its summary goes in the PR, and each finding is fixed or recorded here or in a known-gaps table.
+- **Alternatives:**
+  - A separate security agent on every PR: one more round trip, mostly wasted on infra-only PRs that the reviewer already checks for IAM and secrets.
+  - The reviewer alone: no second, differently built pass on the code paths that handle untrusted input.
+  - `/security-review` only at milestone close: findings would arrive after merge, when they cost more to fix.
+- **Trade-off:** One extra step on app PRs. The checklist is **untested** until the next app PR uses it.
