@@ -1,7 +1,7 @@
 # Spec — Gyazo-style image platform on Azure
 
 ## Goal
-Demonstrate platform engineering on Azure: reproducible infra (Terraform), GitOps delivery, OIDC CI, built-in observability with an SLO, and documented failure experiments. The product is a vehicle, not the point.
+Demonstrate platform engineering on Azure, integrated with AI: reproducible infra (Terraform), GitOps delivery, OIDC CI, built-in observability with an SLO, documented failure experiments, and an AI screenshot overview run like a production dependency (evals in CI, privacy, cost and failure handling). The product is a vehicle; the platform and the way the AI step is operated are the point.
 
 ## Product scope (single-user demo)
 - **Upload:** `POST /upload` (multipart) with the owner API key (`X-API-Key`). Clients: web UI (paste / drag-drop / file picker) and ShareX custom uploader. Same endpoint.
@@ -9,15 +9,40 @@ Demonstrate platform engineering on Azure: reproducible infra (Terraform), GitOp
 - **Link:** returns `https://<host>/i/<id>`; `id` = 22 chars base62 (~128 bits random), unguessable.
 - **View:** `GET /i/<id>` is public; the API redirects (302) to a user-delegation SAS URL for that blob, valid ≤ 5 minutes. Image bytes never stream through the API.
 - **Processing:** async worker generates a thumbnail + reads metadata; row status `pending → ready | failed`. The page shows the image regardless; thumbnail/description are optional enrichments.
+- **AI overview (M-AI):** the worker asks a vision model for a short overview of the screenshot (app, visible text, any error message). It is a separate step with its own status, so a failed or slow model call never blocks the upload or the view. Design requirements: "AI overview" below.
 - **Owner key:** stored in Key Vault, mounted via the Secrets Store CSI driver. Web UI keeps it in `localStorage` → requires a strict CSP (no inline scripts, no third-party script origins).
 - **Abuse limits:** KEDA `maxReplicaCount` caps worker throughput; ingress rate limit on `/upload`.
 
 ## Non-goals
 User accounts/login, multi-tenant, social features, editing tools, streaks/gamification, video (MP4), custom domains per user, HA/multi-region, backups beyond storage soft-delete.
 
+## AI overview (M-AI) — design requirements
+Core scope (owner decision, 2026-11-25): the project shows cloud infrastructure integrated with AI, so the overview is a milestone, not a stretch. Model, hosting and region are chosen at M-AI start with the researcher and recorded in `docs/decisions.md`. Preference: a model hosted in our own Azure subscription, called with workload identity (no API keys).
+- **Evals (required, part of the milestone):**
+  - **Labeled set:** 30–50 screenshots in the repo, each with the facts its overview must contain: app, key visible text, error message. Include hard cases: blurry or tiny text, dark mode, non-English, and screenshots with sensitive content (synthetic only, never real secrets).
+  - **Automatic scoring:** required facts present; nothing claimed that isn't in the image (hallucination check); length limit; sensitive values not repeated back.
+  - **Model-as-judge:** only for the fuzzy checks, with a sample of its grades spot-checked by hand and recorded.
+  - **Tracking:** pass rate, cost per image and latency, recorded per run. The suite runs in CI on any change to the prompt, model or processor, and a drop below the threshold fails the build.
+- **Privacy:** screenshots often contain passwords, emails and private chats. Before the first real call, decide and document:
+  - whether the model provider keeps or trains on inputs
+  - whether overviews are generated from the stored blob or in memory
+  - how long images and overviews are kept (see the retention gap in M2)
+  - whether private endpoints are worth their cost here
+- **Cost and abuse:**
+  - Cache overviews by image content hash, so a re-upload isn't processed twice.
+  - Cap output tokens.
+  - Reuse the upload rate limit and the KEDA `maxReplicaCount` cap.
+  - Emit cost per image as a metric.
+  - Track spend against the $50 budget.
+- **Failure handling:**
+  - Timeouts and bounded retries on the model call.
+  - Overview status `pending → ready | failed`, separate from the thumbnail.
+  - The page renders without an overview.
+  - A failure experiment: the model endpoint is unavailable, and uploads and views still succeed.
+
 ## Later (only after M6, each optional)
-- **M-AI:** worker processor calls a vision model for a description/alt text. Privacy note: screenshots leave our boundary — opt-in, documented. One model call ≠ RAG; semantic search / RAG / agents are separate stretches.
-- Private endpoints for storage/Key Vault (cost vs. security trade-off, see decisions).
+- Semantic search / RAG / agents over overviews (one model call per image is not RAG).
+- Private endpoints for storage/Key Vault (cost vs. security trade-off, see decisions). Revisit at M-AI as part of the privacy decision.
 
 ## Success criteria (= definition of done)
 1. Clean subscription → running system using `infra/bootstrap`, `infra/terraform` and documented steps.
@@ -25,7 +50,8 @@ User accounts/login, multi-tenant, social features, editing tools, streaks/gamif
 3. Grafana dashboards, alerts, and ≥1 SLO (availability of `GET /i/*`, 99.5% over 7d, multi-window burn-rate alert) working against real traffic.
 4. Four failure experiments run and written up (hypothesis, method, dashboards, recovery, lessons): kill pod; break storage access (remove role assignment); saturate queue; bad deploy + rollback.
 5. README: architecture diagram, cost notes, teardown steps, decisions log.
-6. Torn down after verification; teardown verified (no billable resources remain).
+6. AI overview live with its eval suite gating CI (pass rate, cost per image and latency tracked) and the model-down experiment written up.
+7. Torn down after verification; teardown verified (no billable resources remain).
 
 ## Milestones
 | # | Milestone | Effort | Verification |
@@ -35,6 +61,7 @@ User accounts/login, multi-tenant, social features, editing tools, streaks/gamif
 | M2 | Local app: API + web + worker, tests, Azurite, ShareX against localhost | 1–2 d | pytest/ruff/vitest green; ShareX upload → link works locally |
 | M3 | **First vertical slice on AKS:** raw manifests, ingress, workload identity, metrics + 1 Grafana dashboard; experiment 1 (kill pod) | 2 d | Upload/view from internet; dashboard shows RED metrics; experiment write-up |
 | M4 | Queue + KEDA worker, OTel traces (Tempo), SLO + alerts; experiments 2–3 | 2 d | Trace spans API→queue→worker; burn-rate alert fires in experiment |
+| M-AI | AI screenshot overview: vision model behind workload identity, eval suite in CI, privacy/retention decisions, cache + cost metric, graceful failure (see "AI overview"). After M4 because it needs the queue worker and traces. | 2–3 d | Eval suite green in CI with pass rate, cost/image and latency recorded; a prompt change that drops below threshold fails the build; model-down experiment: upload/view still work |
 | M5 | Helm chart replaces manifests | 1 d | `helm lint`/template diff; redeploy no downtime |
 | M6 | ArgoCD GitOps; CI bumps image tag; experiment 4 (bad deploy + rollback) | 1–2 d | Git commit → synced deploy; rollback documented |
 | M7 | Logs (Loki) correlated with traces | 0.5–1 d | Log → trace link in Grafana |
@@ -84,6 +111,19 @@ Known gaps:
 | Upload isn't atomic: if the table insert or enqueue fails after the blob write, an orphan blob (or a `pending` record with no job) is left. | orchestrator | M4 (janitor/expiry with the queue work) |
 | The early body-size check trusts `Content-Length`; a lying client is still cut off at cap+1 bytes in the route, but Starlette may spool up to the real body. | orchestrator | M3 (gateway request-size limit) |
 | No alerting on stuck jobs: a poison job retried about 2,300 times unnoticed (see lesson). Need an alert on queue message age / dequeue count. | orchestrator | M4 (SLO + alerts) |
+| No image retention policy: images are kept until teardown (storage soft-delete only). Screenshots often hold secrets, so decide how long images (and later overviews) live and enforce it (lifecycle rule or janitor). | orchestrator proposes, owner decides | M4 (janitor), and before M-AI stores any overview |
 
 Lesson: the local compose stack had been running images built before the reviewer fixes landed, so a stale test job (fake id, no record) retried about 2,300 times over roughly a day and a half on the old worker. **Verified (compose log, 2026-11-23):** after `docker compose up -d --build`, the worker on `main` logged "no longer exists; dropping job" on the first pass and did not see the job again past the 60 s visibility window (the deleted-record path from D-020). Local stacks need a rebuild after pulling; `docs/local-dev.md` now says so.
 
+### M3 — in progress
+Evidence so far:
+- **Verified (owner-approved local applies, 2026-11-25):** bootstrap IAM from #14 and #16. `az role assignment list -g rg-gyazo-dev` shows:
+  - RBAC Administrator for ci-apply, with its condition now listing Network Contributor (`4d97b98b…`) in both the write and the delete sets
+  - AKS Cluster User Role for ci-plan
+  - AKS RBAC Cluster Admin for the owner
+
+Lesson: the first bootstrap apply only partly succeeded.
+- Two changes applied. The third was rejected with `400 RoleAssignmentCannotContainHtmlTags` because its description contained `rg-<env>`.
+- Azure validates that text server-side, so `terraform plan`, validate, tflint and checkov all passed it.
+- The fix (#16) was a separate reviewed PR, and the re-plan (1 to add) was approved again by the owner rather than reusing the first approval.
+- Rule: no angle brackets in strings Azure receives (descriptions, tags). Comments and Terraform variable descriptions are fine.
