@@ -30,6 +30,16 @@ output "ci_apply_client_id" {
   value       = azurerm_user_assigned_identity.ci_apply.client_id
 }
 
+output "ci_push_client_id" {
+  description = "Client ID of id-gyazo-ci-push (GitHub `push` environment variable AZURE_CLIENT_ID)."
+  value       = azurerm_user_assigned_identity.ci_push.client_id
+}
+
+output "ci_aks_power_client_id" {
+  description = "Client ID of id-gyazo-ci-aks-power (GitHub `aks-power` environment variable AZURE_CLIENT_ID)."
+  value       = azurerm_user_assigned_identity.ci_aks_power.client_id
+}
+
 output "tenant_id" {
   description = "Entra tenant ID (AZURE_TENANT_ID)."
   value       = data.azurerm_client_config.current.tenant_id
