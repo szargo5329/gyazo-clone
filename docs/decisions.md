@@ -146,3 +146,12 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 - **CI:** a new `e2e (compose + smoke)` job builds both images and runs `scripts/smoke.py` against Azurite + API + worker. Checkov now also scans Dockerfiles; `CKV_DOCKER_2` (HEALTHCHECK) is skipped inline, because Kubernetes uses probes. Gitleaks allowlists only Azurite's public dev key (`.gitleaks.toml`).
 - **Required checks (retro rule):** `python lint / test`, `web lint / test / build` and `e2e (compose + smoke)` become required on `main` once this PR is green. They always run now that `app/` exists.
 
+
+## D-022 AI screenshot overview is core scope, after M4 — Accepted
+- **Context:** The spec listed M-AI (a vision-model description per screenshot) as an optional "Later" stretch after M6. The owner decided on 2026-11-25 that the project shows cloud infrastructure *integrated with AI*, so the AI step is part of what's being demonstrated.
+- **Decision:** M-AI becomes a milestone after M4, with requirements in `docs/spec.md` → "AI overview": an eval suite gating CI, privacy and retention decisions, caching and a cost metric, plain-text rendering, and a model-down failure experiment (experiment 5). The model, hosting and region stay open until M-AI starts, when the researcher compares them. The preference is a model hosted in our subscription, called with workload identity.
+- **Alternatives:**
+  - Keep it in "Later": that undersells the AI integration the project is meant to show.
+  - Put it before M4: it needs the queue worker (the pluggable processor) and traces to measure latency, and those land in M4.
+  - Put it after M6: it would then ship on GitOps, but it would come last, when time is shortest.
+- **Trade-off:** It adds 2–3 days, plus model spend under the $50 budget. Eval runs in CI cost money on every prompt change, so each run is capped. Model access for CI needs a new IAM role, which the owner approves.

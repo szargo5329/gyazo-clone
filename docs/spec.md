@@ -33,7 +33,11 @@ Core scope (owner decision, 2026-11-25): the project shows cloud infrastructure 
   - Cap output tokens.
   - Reuse the upload rate limit and the KEDA `maxReplicaCount` cap.
   - Emit cost per image as a metric.
-  - Track spend against the $50 budget.
+  - Track spend against the $50 budget (D-017). Eval runs call the model too: cap each CI run, by sample size or a cost ceiling, and run the full set only when the prompt, model or processor changes.
+  - CI needs model access without a stored key (GitHub OIDC). Neither CI identity has a model role today, and adding one is an IAM change that needs owner approval.
+- **Security:**
+  - Render the overview as plain text, never HTML: model output is untrusted, and the page keeps the owner key in `localStorage`, so HTML output would be a stored-XSS path.
+  - Treat text inside screenshots as untrusted model input (prompt injection). The model has no tools or credentials, so the worst case is a bad overview, never an action.
 - **Failure handling:**
   - Timeouts and bounded retries on the model call.
   - Overview status `pending → ready | failed`, separate from the thumbnail.
@@ -42,15 +46,15 @@ Core scope (owner decision, 2026-11-25): the project shows cloud infrastructure 
 
 ## Later (only after M6, each optional)
 - Semantic search / RAG / agents over overviews (one model call per image is not RAG).
-- Private endpoints for storage/Key Vault (cost vs. security trade-off, see decisions). Revisit at M-AI as part of the privacy decision.
+- Private endpoints for storage/Key Vault (cost vs. security trade-off, see decisions). The M-AI privacy decision may pull this forward.
 
 ## Success criteria (= definition of done)
 1. Clean subscription → running system using `infra/bootstrap`, `infra/terraform` and documented steps.
 2. Delivered via ArgoCD; CI uses GitHub OIDC (no long-lived Azure secrets in GitHub).
 3. Grafana dashboards, alerts, and ≥1 SLO (availability of `GET /i/*`, 99.5% over 7d, multi-window burn-rate alert) working against real traffic.
-4. Four failure experiments run and written up (hypothesis, method, dashboards, recovery, lessons): kill pod; break storage access (remove role assignment); saturate queue; bad deploy + rollback.
+4. Five failure experiments run and written up (hypothesis, method, dashboards, recovery, lessons): 1 kill pod (M3); 2 break storage access (remove role assignment) and 3 saturate queue (M4); 4 bad deploy + rollback (M6); 5 model endpoint down (M-AI). Numbers are IDs from when each was planned, so 5 runs before 4.
 5. README: architecture diagram, cost notes, teardown steps, decisions log.
-6. AI overview live with its eval suite gating CI (pass rate, cost per image and latency tracked) and the model-down experiment written up.
+6. AI overview live, with its eval suite gating CI (pass rate, cost per image and latency tracked).
 7. Torn down after verification; teardown verified (no billable resources remain).
 
 ## Milestones
@@ -61,7 +65,7 @@ Core scope (owner decision, 2026-11-25): the project shows cloud infrastructure 
 | M2 | Local app: API + web + worker, tests, Azurite, ShareX against localhost | 1–2 d | pytest/ruff/vitest green; ShareX upload → link works locally |
 | M3 | **First vertical slice on AKS:** raw manifests, ingress, workload identity, metrics + 1 Grafana dashboard; experiment 1 (kill pod) | 2 d | Upload/view from internet; dashboard shows RED metrics; experiment write-up |
 | M4 | Queue + KEDA worker, OTel traces (Tempo), SLO + alerts; experiments 2–3 | 2 d | Trace spans API→queue→worker; burn-rate alert fires in experiment |
-| M-AI | AI screenshot overview: vision model behind workload identity, eval suite in CI, privacy/retention decisions, cache + cost metric, graceful failure (see "AI overview"). After M4 because it needs the queue worker and traces. | 2–3 d | Eval suite green in CI with pass rate, cost/image and latency recorded; a prompt change that drops below threshold fails the build; model-down experiment: upload/view still work |
+| M-AI | AI screenshot overview: vision model (preferably keyless via workload identity; an API key would live in Key Vault and needs its own decision), eval suite in CI, privacy/retention decisions, cache + cost metric, graceful failure (see "AI overview"). After M4 because it needs the queue worker and traces. | 2–3 d | Eval suite green in CI with pass rate, cost/image and latency recorded; a prompt change that drops below threshold fails the build; model-down experiment (5): upload/view still work |
 | M5 | Helm chart replaces manifests | 1 d | `helm lint`/template diff; redeploy no downtime |
 | M6 | ArgoCD GitOps; CI bumps image tag; experiment 4 (bad deploy + rollback) | 1–2 d | Git commit → synced deploy; rollback documented |
 | M7 | Logs (Loki) correlated with traces | 0.5–1 d | Log → trace link in Grafana |
@@ -117,13 +121,17 @@ Lesson: the local compose stack had been running images built before the reviewe
 
 ### M3 — in progress
 Evidence so far:
-- **Verified (owner-approved local applies, 2026-11-25):** bootstrap IAM from #14 and #16. `az role assignment list -g rg-gyazo-dev` shows:
-  - RBAC Administrator for ci-apply, with its condition now listing Network Contributor (`4d97b98b…`) in both the write and the delete sets
-  - AKS Cluster User Role for ci-plan
-  - AKS RBAC Cluster Admin for the owner
+- **Verified (agent-run, owner-approved local applies, 2026-11-25):** bootstrap IAM from #14 and #16.
+  - **First apply** (saved plan, 2 add / 1 change): the condition change and ci-plan's grant succeeded; the owner's grant failed (see lesson).
+  - **Second apply** (saved plan from 35bc0e4, 1 add): succeeded. This was approved separately.
+  - **`az role assignment list -g rg-gyazo-dev`** (same day) shows:
+    - RBAC Administrator for ci-apply. The condition lists Network Contributor (`4d97b98b…`) in the `@Request` set under `roleAssignments/write` and in the `@Resource` set under `roleAssignments/delete`.
+    - AKS Cluster User Role for ci-plan.
+    - AKS RBAC Cluster Admin for the owner.
+  - **Not yet shown:** that there is no drift. Bootstrap has no CI, so a clean re-plan is the drift check, and it hasn't been run.
 
-Lesson: the first bootstrap apply only partly succeeded.
+Lesson (agent-observed from the apply output, 2026-11-25): the first bootstrap apply only partly succeeded.
 - Two changes applied. The third was rejected with `400 RoleAssignmentCannotContainHtmlTags` because its description contained `rg-<env>`.
-- Azure validates that text server-side, so `terraform plan`, validate, tflint and checkov all passed it.
+- That text is checked by Azure's API at create time, not by Terraform: `terraform plan`, validate, tflint and checkov all passed it.
 - The fix (#16) was a separate reviewed PR, and the re-plan (1 to add) was approved again by the owner rather than reusing the first approval.
 - Rule: no angle brackets in strings Azure receives (descriptions, tags). Comments and Terraform variable descriptions are fine.
