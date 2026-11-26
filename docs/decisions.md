@@ -254,3 +254,24 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 - **Open items:**
   - `Microsoft.Resources/subscriptions/operationresults/read` may be needed for az's long-running-operation polling. **Untested**; add it only if the live run returns 403.
   - The workflow itself and a live stop/start run: **untested**.
+
+## D-026 Image build, scan and supply-chain pins (M3) — Accepted
+- **Context:** M3 deploys the first images to AKS. The M2 gap said base images were pinned by tag only and nothing scanned them. In March 2026 the `aquasecurity/trivy-action` tags 0.0.1–0.34.2 were force-pushed to malicious commits (CVE-2026-33634), so how the scanner itself is pinned matters too.
+- **Decision:**
+  - `build.yml` builds both images on every PR and on `main`, and scans them with Trivy (action pinned to the commit SHA of the immutable release v0.36.0, Trivy binary pinned to v0.76.2, never `latest`). The gate fails on **fixable** HIGH/CRITICAL vulnerabilities (`ignore-unfixed`).
+  - PR runs get no Azure token. On `main`, a separate job in the `push` environment loads the exact scanned image and pushes it, tagged with the commit SHA (D-024). Deployments pin the digest, not the tag.
+  - Base images are pinned `tag@sha256:digest`. Dependabot (`docker` ecosystem) refreshes digests and patch versions; node majors and Python minors/majors are ignored and done by hand.
+  - The runtime stage runs `apt-get upgrade` and uninstalls pip.
+  - **Required checks on `main`:** `image build + scan (api)` and `image build + scan (worker)`, added to the ruleset after their first run produces the names. The workflow has no path filter, so the checks always report and can't hang. The `push to ACR` jobs never run on PRs, so they are not required.
+- **Why:**
+  - The first local scan found 5 fixable HIGHs per image, none in our own dependencies: pip's vendored urllib3, msgpack and pkg_resources (setuptools) in the base image, plus Debian `libzstd1` (fixed in `deb13u1` but not yet in the official python image). The app runs from the uv virtualenv and never calls pip, so removing pip shrinks the attack surface instead of adding an ignore entry. **Verified (local, 2026-11-26):** after the fix both images scan clean (exit 0), `python -m pip` is absent, and `import gyazo_api.main` / `import gyazo_worker.processor` succeed in the images.
+- **Alternatives:**
+  - `.trivyignore` the pip findings: hides real code that ships in the image.
+  - Wait for the upstream base image rebuild: blocks M3 on someone else's schedule; Dependabot catches up later anyway.
+  - Distroless or Chainguard base images: fewer packages, but a bigger change to M2's tested images; revisit in M5.
+  - Trivy from a digest-pinned container instead of the action: slightly more hardened; the immutable-release SHA pin is enough here.
+- **Trade-offs:**
+  - `apt-get upgrade` means the digest pin no longer fully determines the image; the apt layer depends on build day. Accepted for the CVE gate; Dependabot digest bumps make the step a no-op over time.
+  - A required scan is a moving target: a newly published CVE or a Trivy DB outage can block unrelated PRs. Mitigation: a digest-bump PR, or a dated `.trivyignore` entry recorded here.
+  - `ignore-unfixed` hides unfixed CVEs. A periodic full report is a known gap.
+- **Untested:** the whole workflow on GitHub runners (first PR run), and the push job (first `main` run; needs the D-024 bootstrap apply and the `push` environment's `AZURE_CLIENT_ID`).
