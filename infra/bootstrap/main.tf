@@ -135,3 +135,40 @@ resource "azurerm_federated_identity_credential" "ci_apply" {
   audience                  = [local.github_oidc_audience]
   subject                   = "repo:${var.github_subject_repo}:environment:apply"
 }
+
+# ci-push: builds and pushes app images from main. Separate from ci-apply so pushing
+# an image never needs the apply approval gate and apply's identity is not a registry
+# writer (D-024).
+resource "azurerm_user_assigned_identity" "ci_push" {
+  name                = "id-gyazo-ci-push"
+  resource_group_name = azurerm_resource_group.platform.name
+  location            = azurerm_resource_group.platform.location
+  tags                = local.platform_tags
+}
+
+# ci-aks-power: nightly scheduled stop (and manual start) of the AKS cluster (D-025).
+resource "azurerm_user_assigned_identity" "ci_aks_power" {
+  name                = "id-gyazo-ci-aks-power"
+  resource_group_name = azurerm_resource_group.platform.name
+  location            = azurerm_resource_group.platform.location
+  tags                = local.platform_tags
+}
+
+# The `push` and `aks-power` environments have a main-only deployment branch rule and
+# no reviewers (configured in GitHub). Jobs that declare an environment get the
+# `:environment:<name>` subject even when triggered by push or schedule.
+resource "azurerm_federated_identity_credential" "ci_push" {
+  name                      = "github-environment-push"
+  user_assigned_identity_id = azurerm_user_assigned_identity.ci_push.id
+  issuer                    = local.github_oidc_issuer
+  audience                  = [local.github_oidc_audience]
+  subject                   = "repo:${var.github_subject_repo}:environment:push"
+}
+
+resource "azurerm_federated_identity_credential" "ci_aks_power" {
+  name                      = "github-environment-aks-power"
+  user_assigned_identity_id = azurerm_user_assigned_identity.ci_aks_power.id
+  issuer                    = local.github_oidc_issuer
+  audience                  = [local.github_oidc_audience]
+  subject                   = "repo:${var.github_subject_repo}:environment:aks-power"
+}

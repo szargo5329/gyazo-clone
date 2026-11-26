@@ -38,6 +38,20 @@ locals {
   # Set operators matter: for one value X vs {a,b}, ForAnyOfAnyValues:GuidEquals = "X is one of",
   # ForAnyOfAllValues:GuidNotEquals = "X is none of" (Microsoft's documented exclusion form).
   # ForAnyOfAnyValues:GuidNotEquals would be "X != a OR X != b", which is always true. Caught in review.
+  # The PrincipalId exclusion covers every CI identity (plan, apply, push, aks-power), so
+  # ci-apply can never grant an allowlisted role to any of them. Add new CI identities here.
+  # Deletes have no PrincipalId check (the documented delete form only constrains the role):
+  # ci-apply can delete an allowlisted-role assignment from anyone, but none of the CI
+  # identities' assignments in rg-<env> use allowlisted roles, so it can't strip them.
+  # Invariant: if a CI identity is ever given an allowlisted role in rg-<env> (e.g. AcrPull),
+  # ci-apply could delete that assignment. Revisit this condition before doing so.
+  ci_principal_ids = join(", ", [
+    azurerm_user_assigned_identity.ci_apply.principal_id,
+    azurerm_user_assigned_identity.ci_plan.principal_id,
+    azurerm_user_assigned_identity.ci_push.principal_id,
+    azurerm_user_assigned_identity.ci_aks_power.principal_id,
+  ])
+
   rbac_admin_condition = <<-EOT
     (
      (
@@ -49,7 +63,7 @@ locals {
       AND
       @Request[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase {'ServicePrincipal'}
       AND
-      @Request[Microsoft.Authorization/roleAssignments:PrincipalId] ForAnyOfAllValues:GuidNotEquals {${azurerm_user_assigned_identity.ci_apply.principal_id}, ${azurerm_user_assigned_identity.ci_plan.principal_id}}
+      @Request[Microsoft.Authorization/roleAssignments:PrincipalId] ForAnyOfAllValues:GuidNotEquals {${local.ci_principal_ids}}
      )
     )
     AND
@@ -155,8 +169,8 @@ resource "azurerm_role_assignment" "ci_apply_state_contributor" {
 # needs to read image bytes or secret values. Add a role only if an apply proves it's needed.
 
 # Lets the main config create the workload identities' role assignments, but only
-# for the allowlisted roles, only to service principals, and never to the CI
-# identities themselves (no self-grant of image/secret access). It cannot grant
+# for the allowlisted roles, only to service principals, and never to any CI
+# identity (plan, apply, push, aks-power: no self-grant of image/secret access). It cannot grant
 # Owner/Contributor/RBAC admin. This *narrows* CI's power rather than eliminating it:
 # Contributor can still create resources that carry their own identity. Reviewed by a human
 # at every apply via the `apply` environment.
@@ -179,4 +193,61 @@ resource "azurerm_role_assignment" "ci_apply_rbac_admin" {
       error_message = "Every allowlisted role must resolve to a bare role definition GUID for the ABAC condition."
     }
   }
+}
+
+# ---------------------------------------------------------------------------
+# ci-push: push app images to ACR, behind the `push` environment (main only). D-024.
+# ---------------------------------------------------------------------------
+
+# AcrPush = pull + push, no delete. It is the documented CI push role while the
+# registry uses LegacyRegistryPermissions (D-021); the Repository Writer roles only
+# apply in ABAC repository-permissions mode.
+# Scope trade-off: rg-<env>, not the registry. Bootstrap runs before the main config
+# creates the ACR on a rebuild, so a registry-scoped data lookup would break ordering.
+# Review rule: only one registry may exist in rg-gyazo-<env>; a second one would be
+# pushable by CI.
+# Unverified: `az acr login` may also need a control-plane read on the registry. Don't
+# add a role for it until the first live push run proves it (record the result in D-024).
+resource "azurerm_role_assignment" "ci_push_acr_push" {
+  scope                = azurerm_resource_group.env.id
+  role_definition_name = "AcrPush"
+  principal_id         = azurerm_user_assigned_identity.ci_push.principal_id
+  principal_type       = "ServicePrincipal"
+  description          = "CI image push from main: pull and push to the single registry in this env resource group."
+}
+
+# ---------------------------------------------------------------------------
+# ci-aks-power: nightly AKS stop (and manual start), behind the `aks-power`
+# environment (main only). D-025.
+# ---------------------------------------------------------------------------
+
+# No built-in role is this narrow: Azure Kubernetes Service Contributor Role also allows
+# update and delete of the cluster. Read is needed so `az aks stop/start` can look the
+# cluster up. No data actions, so no in-cluster or credential access.
+# `Microsoft.Resources/subscriptions/operationresults/read` may be needed for az's
+# long-running-operation polling; add it only if the live run returns 403 (untested).
+resource "azurerm_role_definition" "aks_start_stop" {
+  name        = "gyazo AKS start-stop (${var.env})"
+  scope       = azurerm_resource_group.env.id
+  description = "Read, start and stop AKS clusters in rg-gyazo-${var.env}. No update, delete or credential access."
+
+  permissions {
+    actions = [
+      "Microsoft.ContainerService/managedClusters/read",
+      "Microsoft.ContainerService/managedClusters/start/action",
+      "Microsoft.ContainerService/managedClusters/stop/action",
+    ]
+    not_actions = []
+  }
+
+  assignable_scopes = [azurerm_resource_group.env.id]
+}
+
+# RG scope so the grant survives a cluster rebuild; it covers only clusters in rg-<env>.
+resource "azurerm_role_assignment" "ci_aks_power_start_stop" {
+  scope              = azurerm_resource_group.env.id
+  role_definition_id = azurerm_role_definition.aks_start_stop.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.ci_aks_power.principal_id
+  principal_type     = "ServicePrincipal"
+  description        = "Scheduled AKS stop and manual start for clusters in this env resource group."
 }
