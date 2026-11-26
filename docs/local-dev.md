@@ -47,7 +47,7 @@ Screenshots now upload, and the `/i/<id>` link is copied to your clipboard. Then
 git update-index --skip-worktree app/sharex/gyazo-clone-local.sxcu
 ```
 
-Undo with `--no-skip-worktree` before pulling a change to that file.
+While the flag is set, a `git pull` that changes this file fails, and `stash`/`checkout`/`reset --hard` can error or overwrite your key. To take an upstream change: copy your key somewhere safe, run `git update-index --no-skip-worktree app/sharex/gyazo-clone-local.sxcu`, discard your edit, pull, then paste the key back and set the flag again. This flag only guards against accidents; CI's gitleaks scan is the backstop.
 
 ## Tests and lint
 

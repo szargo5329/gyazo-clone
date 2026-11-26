@@ -1,13 +1,13 @@
 # gyazo-clone — platform engineering portfolio project
 
-Gyazo-style image sharing (upload → short link → view) on Azure. **The app is deliberately thin; infra, delivery, observability and failure handling are the point.** Full brief: `HANDOFF.md`. Scope: `docs/spec.md`. Decisions: `docs/decisions.md` (add an entry for every non-trivial choice: context, decision, alternatives, why).
+Gyazo-style image sharing (upload → short link → view) on Azure. **Cloud infrastructure integrated with AI. The app is deliberately thin; infra, delivery, observability, failure handling and running the AI screenshot overview like a production dependency (evals in CI, privacy, cost, failure handling; D-022) are the point.** Full brief: `HANDOFF.md`. Scope: `docs/spec.md`. Decisions: `docs/decisions.md` (add an entry for every non-trivial choice: context, decision, alternatives, why).
 
 ## Hard guardrails (never violate)
 - Never run `terraform apply`/`destroy`, or any command that creates, changes or deletes Azure resources or spends money, without the user's explicit approval **in the current session**.
 - Never commit secrets. No keys in code, tfvars, manifests or provenance. Use workload identity / OIDC; secrets live in Key Vault.
 - **Ask the user only for:** `terraform apply`/`destroy` and any other cloud change (show the `terraform plan` first); spending money; secrets; IAM/role assignments; deleting data or resources. Everything else — branches, commits, PRs, merging green+reviewed PRs, repo settings, tool installs, routine decisions — proceed and report. Record non-trivial decisions in `docs/decisions.md`.
 - Prove work: run fmt/validate/tests/lint and show output. Never claim "works" without evidence.
-- Resist scope creep: no login, social, editing, video. Out-of-scope ideas go to `docs/spec.md` → "Later".
+- Resist scope creep: no login, social, editing, video. The AI overview (M-AI) is core scope, not creep. Out-of-scope ideas go to `docs/spec.md` → "Later".
 
 ## Repo layout
 ```
