@@ -192,3 +192,11 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - The PIP-scoped Network Contributor grant is **untested until the first gateway Service (M3)**; it is inferred, not verified. If the cloud provider looks the IP up by address (`azure-load-balancer-ipv4` + `azure-load-balancer-resource-group`), it may need to list public IPs at RG scope. Mitigation: reference the IP by name (`service.beta.kubernetes.io/azure-pip-name`, a direct GET) in the M3 gateway Service. If that still fails, a broader grant is a **new owner decision**: the review rule above forbids RG scope as-is.
   - Encryption at host is off (checkov CKV_AZURE_227 skipped). It needs the `EncryptionAtHost` subscription feature registration, which is a subscription change. **Residual risk:** the node temp disk and caches (`emptyDir`, where uploads may buffer) are **not** host-encrypted. Only the managed OS disk has platform encryption.
 
+## D-022 AI screenshot overview is core scope, after M4 — Accepted
+- **Context:** The spec listed M-AI (a vision-model description per screenshot) as an optional "Later" stretch after M6. The owner decided on 2026-11-25 that the project shows cloud infrastructure *integrated with AI*, so the AI step is part of what's being demonstrated.
+- **Decision:** M-AI becomes a milestone after M4, with requirements in `docs/spec.md` → "AI overview": an eval suite gating CI, privacy and retention decisions, caching and a cost metric, plain-text rendering, and a model-down failure experiment (experiment 5). The model, hosting and region stay open until M-AI starts, when the researcher compares them. The preference is a model hosted in our subscription, called with workload identity.
+- **Alternatives:**
+  - Keep it in "Later": that undersells the AI integration the project is meant to show.
+  - Put it before M4: it needs the queue worker (the pluggable processor) and traces to measure latency, and those land in M4.
+  - Put it after M6: it would then ship on GitOps, but it would come last, when time is shortest.
+- **Trade-off:** It adds 2–3 days, plus model spend under the $50 budget. Eval runs in CI cost money on every prompt change, so each run is capped. Model access for CI needs a new IAM role, which the owner approves.
