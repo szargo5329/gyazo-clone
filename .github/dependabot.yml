@@ -7,3 +7,18 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  # Base images: Dependabot bumps `FROM image:tag@sha256:...` lines (tag + digest together).
+  - package-ecosystem: docker
+    directories: ["/app/api", "/app/worker"]
+    schedule:
+      interval: weekly
+    # Digest refreshes and patch bumps only: node majors can be non-LTS and a new Python minor
+    # needs its own check (e.g. azure-data-tables support, D-020), so those are manual PRs.
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      base-images:
+        patterns: ["*"]

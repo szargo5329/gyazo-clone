@@ -1,0 +1,131 @@
+name: build
+
+# Container images for the api and worker (M3, D-024).
+#   pull_request    -> build + Trivy scan only. No Azure token, nothing pushed.
+#   push to main    -> build + scan, then push to ACR as id-gyazo-ci-push (AcrPush only),
+#                      via the `push` environment (main-only branch policy, no reviewers).
+#   workflow_dispatch on main -> same as push.
+# Images are tagged with the commit SHA (never `latest`). ACR tags are mutable and builds are
+# not byte-reproducible (apt upgrade), so deployments pin the DIGEST, not the tag; the push job
+# prints it in the step summary.
+# Required checks on main: "image build + scan (api)" and "image build + scan (worker)" (D-026).
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per SHA on main: GitHub keeps one pending run per group, so a per-branch group could drop
+  # the first of two quick merges and leave that commit without an image.
+  group: build-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Actions are pinned to commit SHAs (public repo: tags can be moved). Dependabot bumps them.
+# trivy-action: tags 0.0.1-0.34.2 were hijacked in March 2026 (CVE-2026-33634). v0.36.0 is an
+# immutable release; the Trivy binary version is set explicitly, never `latest`.
+
+jobs:
+  build:
+    name: image build + scan (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, worker]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: docker build
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: docker build -f "app/$IMAGE/Dockerfile" -t "gyazo-$IMAGE:ci" --label "org.opencontainers.image.revision=$GITHUB_SHA" .
+      - name: trivy scan (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.2
+          image-ref: gyazo-${{ matrix.image }}:ci
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+      - name: save image for the push job
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: docker save "gyazo-$IMAGE:ci" | gzip -1 > "image-$IMAGE.tar.gz"
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-${{ matrix.image }}
+          path: image-${{ matrix.image }}.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  push:
+    name: push to ACR (${{ matrix.image }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Enforced here as well as by the environment's branch policy: workflow_dispatch can target any ref.
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AZURE_TENANT_ID != '' && vars.ACR_NAME != '' }}
+    # OIDC subject repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:push (federated credential, D-024)
+    environment: push
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, worker]
+    env:
+      CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }} # `push` environment var = id-gyazo-ci-push
+      TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ACR_NAME: ${{ vars.ACR_NAME }} # repo var, e.g. acrgyazodevxxxxx (an identifier, not a secret)
+      IMAGE: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-${{ matrix.image }}
+      - name: log in as ci-push (GitHub OIDC, no secrets)
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r .value)
+          echo "::add-mask::$token"
+          az login --service-principal -u "$CLIENT_ID" -t "$TENANT_ID" --federated-token "$token" \
+            --allow-no-subscriptions --output none
+          az account set --subscription "$SUBSCRIPTION_ID"
+          # Not `az acr login`: it looks the registry up through ARM, which needs
+          # registries/read, and AcrPush has none (D-024). Instead use the documented ACR
+          # AAD flow: exchange the Entra token for an ACR refresh token, then docker login.
+          login="$ACR_NAME.azurecr.io"
+          aad=$(az account get-access-token --query accessToken -o tsv)
+          echo "::add-mask::$aad"
+          refresh=$(curl -sSf -X POST "https://$login/oauth2/exchange" \
+            --data-urlencode grant_type=access_token --data-urlencode "service=$login" \
+            --data-urlencode "tenant=$TENANT_ID" --data-urlencode "access_token=$aad" | jq -r .refresh_token)
+          echo "::add-mask::$refresh"
+          if [ -z "$refresh" ] || [ "$refresh" = null ]; then echo "::error::ACR token exchange failed"; exit 1; fi
+          docker login "$login" -u 00000000-0000-0000-0000-000000000000 --password-stdin <<<"$refresh"
+      - name: tag + push, record the digest
+        run: |
+          set -euo pipefail
+          gunzip -c "image-$IMAGE.tar.gz" | docker load
+          ref="$ACR_NAME.azurecr.io/gyazo-$IMAGE:$GITHUB_SHA"
+          docker tag "gyazo-$IMAGE:ci" "$ref"
+          docker push "$ref"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$ref")
+          echo "pushed $digest"
+          echo "- \`gyazo-$IMAGE\`: \`$digest\`" >> "$GITHUB_STEP_SUMMARY"

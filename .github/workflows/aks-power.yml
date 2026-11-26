@@ -1,0 +1,105 @@
+name: aks-power
+
+# Cost control (D-025): stop the dev AKS cluster every night; start/stop/status on demand.
+# Runs as id-gyazo-ci-aks-power, whose custom role allows only managedClusters read/start/stop
+# in rg-gyazo-<env>: it cannot delete, update or reconfigure anything.
+# Stopping saves node compute only; disks, public IPs, the LB, ACR and storage keep billing.
+# These are ARM calls, so the API server's authorized IP ranges don't apply to them.
+on:
+  schedule:
+    # UTC, off the top of the hour (GitHub drops/delays :00 runs under load).
+    # 06:17 UTC = 00:17 CST / 01:17 CDT. Scheduled runs use main only.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do with the cluster
+        type: choice
+        options: [status, start, stop]
+        default: status
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aks-power # never two power operations at once
+  cancel-in-progress: false
+
+jobs:
+  # Job-level `if` only sees repo variables, so without this a missing variable would make the
+  # nightly stop skip silently with a green run.
+  config:
+    name: aks-power config check
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: required repo variables
+        env:
+          TENANT: ${{ vars.AZURE_TENANT_ID }}
+          SUB: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          if [ -z "$TENANT" ] || [ -z "$SUB" ]; then
+            echo "::error::repo variables AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID are not set; the cluster was NOT stopped"
+            exit 1
+          fi
+
+  power:
+    needs: config
+    name: aks ${{ inputs.action || 'stop' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ vars.AZURE_TENANT_ID != '' && github.ref == 'refs/heads/main' }}
+    # OIDC subject repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:aks-power (D-025)
+    environment: aks-power
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }} # `aks-power` environment var = id-gyazo-ci-aks-power
+      TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ACTION: ${{ inputs.action || 'stop' }} # schedule has no inputs -> stop
+      RG: rg-gyazo-dev
+      CLUSTER: aks-gyazo-dev
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: log in as ci-aks-power (GitHub OIDC, no secrets)
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r .value)
+          echo "::add-mask::$token"
+          az login --service-principal -u "$CLIENT_ID" -t "$TENANT_ID" --federated-token "$token" \
+            --allow-no-subscriptions --output none
+          az account set --subscription "$SUBSCRIPTION_ID"
+
+      - name: ${{ inputs.action || 'stop' }} (idempotent)
+        run: |
+          set -euo pipefail
+          state() { az aks show -g "$RG" -n "$CLUSTER" --query "[powerState.code, provisioningState]" -o tsv 2>"$errf" | tr '\n' ' '; }
+          errf=$(mktemp)
+          if ! before=$(state); then
+            # No cluster (before the first apply or after a teardown): nothing to stop.
+            if grep -q "ResourceNotFound" "$errf" && [ "$ACTION" != start ]; then
+              echo "::notice::cluster $CLUSTER not found; nothing to $ACTION"
+              echo "AKS \`$CLUSTER\` not found; $ACTION skipped" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            cat "$errf"; exit 1
+          fi
+          echo "before: $before"
+          case "$ACTION" in
+            status) ;;
+            stop)
+              if [[ "$before" == Stopped* ]]; then echo "already stopped"
+              else az aks stop -g "$RG" -n "$CLUSTER" --output none; fi ;;
+            start)
+              if [[ "$before" == Running* ]]; then echo "already running"
+              else az aks start -g "$RG" -n "$CLUSTER" --output none; fi ;;
+            *) echo "::error::unknown action $ACTION"; exit 1 ;;
+          esac
+          after=$(state)
+          echo "after: $after"
+          echo "AKS \`$CLUSTER\` $ACTION: \`$before\` -> \`$after\`" >> "$GITHUB_STEP_SUMMARY"

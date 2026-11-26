@@ -112,7 +112,10 @@ Known gaps:
 |---|---|---|
 | Entra signing path (user-delegation key) untested: Azurite can't issue one (D-019). | orchestrator | First AKS deploy (M3) |
 | Ingress rate limit on `/upload` (spec) not in M2; it belongs to the gateway. | orchestrator | M3 (Envoy Gateway) |
-| Docker base images pinned by tag, not digest; no image scan yet. | orchestrator | M3 |
+| ~~Docker base images pinned by tag, not digest; no image scan yet.~~ Fixed in code (D-026): tag@digest pins, Trivy gate in `build.yml`. **Verified locally** (both images scan clean); closes when the first CI run is green. | orchestrator | M3 |
+| Trivy gates on fixable HIGH/CRITICAL only; no periodic full report of unfixed CVEs (D-026). | orchestrator | M4 (with alerts) |
+| Nightly AKS stop (D-025) fails silently if GitHub disables scheduled workflows after 60 days of repo inactivity. Backstop: the budget alerts (D-017). | owner | M9 (or when the repo goes quiet) |
+| Only one registry may exist in `rg-gyazo-<env>` (AcrPush is RG-scoped, D-024); not enforced in code. | orchestrator | M3 close (tighten scope or add a check) |
 | Upload isn't atomic: if the table insert or enqueue fails after the blob write, an orphan blob (or a `pending` record with no job) is left. | orchestrator | M4 (janitor/expiry with the queue work) |
 | The early body-size check trusts `Content-Length`; a lying client is still cut off at cap+1 bytes in the route, but Starlette may spool up to the real body. | orchestrator | M3 (gateway request-size limit) |
 | No alerting on stuck jobs: a poison job retried about 2,300 times unnoticed (see lesson). Need an alert on queue message age / dequeue count. | orchestrator | M4 (SLO + alerts) |
