@@ -41,7 +41,13 @@ uv run --all-packages python scripts/smoke.py
 3. ShareX → Destinations → Image uploader → Custom image uploader.
 4. ShareX → After capture tasks → tick **Upload image to host**, and After upload tasks → **Copy URL to clipboard**. A fresh install may only save captures locally, and then nothing reaches the API (check `docker compose logs api` for `POST /upload`).
 
-Screenshots now upload, and the `/i/<id>` link is copied to your clipboard. `git status` will show the `.sxcu` as modified while it holds your key: leave it unstaged.
+Screenshots now upload, and the `/i/<id>` link is copied to your clipboard. Then hide your edit from git so it can't be committed by accident (`git add -A`, `git commit -a`):
+
+```powershell
+git update-index --skip-worktree app/sharex/gyazo-clone-local.sxcu
+```
+
+Undo with `--no-skip-worktree` before pulling a change to that file.
 
 ## Tests and lint
 

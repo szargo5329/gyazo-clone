@@ -49,6 +49,7 @@ docs/             spec, decisions, diagrams/, runbooks
 ## Orchestration rules (from the M1 lessons)
 - Researcher before any decision or unfamiliar API. Infra-writer makes Terraform/manifest edits; the orchestrator doesn't hand-edit IaC except trivial typos, and those still get reviewed.
 - **Any commit after the reviewer's last approval goes back to the reviewer**, including "small" fixes made during an apply.
+- **The last review before a merge or apply is a fresh reviewer** (a new agent, not a resumed one). Resumed reviewers are fine for checking fixes, but they remember the earlier diff and their own reasoning.
 - After any `.tf` edit, run the full suite (fmt, validate both roots, tflint, checkov) before committing, not just the check you think is relevant.
 - Auditor sign-off before presenting a plan for apply, a merge, or a milestone as done.
 - Live verification (apply, drift re-plan, CI OIDC run) is a required step: some bugs only show up there.
