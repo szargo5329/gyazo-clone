@@ -62,7 +62,7 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 
 ## D-011 DNS / TLS: public IP DNS label + Let's Encrypt HTTP-01 — Accepted with risk (researched 2026-11-20)
 - **Decision:** `<label>.centralus.cloudapp.azure.com`.
-  - Create the public IP with `domain_name_label` **in Terraform** and point the gateway's LoadBalancer Service at it (`azure-load-balancer-ipv4` + `azure-load-balancer-resource-group` annotations), so the hostname survives cluster rebuilds.
+  - Create the public IP with `domain_name_label` **in Terraform** and point the gateway's LoadBalancer Service at it (`azure-pip-name` + `azure-load-balancer-resource-group` annotations; by name rather than `azure-load-balancer-ipv4`, so the control plane's PIP-scoped grant is enough, see D-021), so the hostname survives cluster rebuilds.
   - cert-manager uses an HTTP-01 challenge through the same Gateway.
 - **Risk:** Let's Encrypt allows 50 certs per registered domain per week, shared globally. In 2024 `*.cloudapp.azure.com` users hit shared limits after Public Suffix List changes, and the current status is unconfirmed.
   - Develop against the **staging** issuer, request production once, and keep the cert Secret.
@@ -145,4 +145,50 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 - **Sync SDK clients:** FastAPI runs `def` routes in a threadpool. Async clients would add aiohttp for no gain at this scale.
 - **CI:** a new `e2e (compose + smoke)` job builds both images and runs `scripts/smoke.py` against Azurite + API + worker. Checkov now also scans Dockerfiles; `CKV_DOCKER_2` (HEALTHCHECK) is skipped inline, because Kubernetes uses probes. Gitleaks allowlists only Azurite's public dev key (`.gitleaks.toml`).
 - **Required checks (retro rule):** `python lint / test`, `web lint / test / build` and `e2e (compose + smoke)` become required on `main` once this PR is green. They always run now that `app/` exists.
+
+## D-021 AKS cluster shape (M3) — Accepted (researched 2026-11-24)
+- **Context:** M3 creates the first billable compute. The cluster must run the API and worker with workload identity (D-005), pull from the Basic ACR, read the owner key from Key Vault, and expose one public gateway (D-008, D-011), at the lowest cost that still shows real platform practice. Argument names were checked against azurerm 5.14.0 with `terraform validate`.
+- **Decision** (`infra/terraform/modules/aks`):
+  - **Control plane:** `aks-gyazo-<env>`, **Free** tier, Kubernetes **1.36**, `automatic_upgrade_channel = "patch"`, `node_os_upgrade_channel = "NodeImage"`. 1.36 is offered in centralus (**verified** 2026-11-24 with `az aks get-versions`: patches 1.36.0–1.36.5).
+  - **Network (D-007):** Azure CNI **Overlay**. Pod CIDR `10.244.0.0/16`, service CIDR `10.0.0.0/16`, DNS `10.0.0.10`. These overlap neither the VNet `10.20.0.0/16` nor each other. Outbound goes through the standard load balancer. No custom subnet NSG: AKS manages the node NSG and opens exactly the ports of each LoadBalancer Service (this resolves the M1 "deferred to M3" note on `snet-aks`).
+  - **Identity and access:** OIDC issuer + workload identity on. The api/worker UAMIs get federated credentials for `system:serviceaccount:gyazo:api` and `system:serviceaccount:gyazo:worker`. The Key Vault Secrets Store CSI add-on is on, with rotation. **Local accounts are off, with Entra ID auth + Azure RBAC** and no admin groups (azurerm 5.14 still needs `tenant_id` in the block). The owner gets *Azure Kubernetes Service RBAC Cluster Admin*, and ci-plan gets *Azure Kubernetes Service Cluster User Role*, both at RG scope, from `infra/bootstrap` (PR #14).
+  - **Apply order:** bootstrap PR #14 must be **applied before this config's first apply**. Bootstrap also adds the ci-apply ABAC allowlist entries. Without them, the three new role assignments (two Network Contributor, one AcrPull) are denied partway through the apply, and the destroy guard (D-016) then blocks the cleanup.
+  - **ci-plan Cluster User Role:** ci-plan gets *Azure Kubernetes Service Cluster User Role* at RG scope (bootstrap PR #14).
+    - *Why:* the azurerm refresh of the cluster calls the `listClusterUserCredential` POST, which Reader doesn't include, so PR plans would fail with a 403.
+    - *Condition:* this is safe **only** while local accounts are disabled and Azure RBAC is on. Then the returned kubeconfig is Entra-only and grants no in-cluster rights by itself. With local accounts on, the same call returns a usable static credential. A lifecycle `precondition` in `modules/aks` asserts `local_account_disabled = true`.
+  - **Run command off:** `run_command_enabled = false`. `az aks command invoke` goes through ARM and so bypasses the authorized IP ranges.
+  - **API server authorized IPs are managed outside Terraform.** The cluster is created with `["0.0.0.0/32"]` (AKS's value for "only the cluster's own outbound IP"). After that, the owner runs `az aks update --api-server-authorized-ip-ranges <ip>/32`, and Terraform ignores the attribute (`ignore_changes`). This keeps the owner's home IP out of a public repo and out of CI, and CI applies don't reset it.
+    - *Runbook:* because the ranges live outside Terraform, check them after each apply with `az aks show -g rg-gyazo-dev -n aks-gyazo-dev --query apiServerAccessProfile`. If the ranges are cleared, the API server becomes reachable from anywhere (Entra auth + Azure RBAC still apply).
+  - **Nodes:** one autoscaled **system** pool, `Standard_D2s_v6` (D-013), min 1 / max 2 (variables), max surge 1, no zones, **managed** 64 GB OS disk (Dsv6 has no ephemeral OS disk support; the default is 128 GB). `temporary_name_for_rotation = "systemtmp"`, so changes to immutable pool properties rotate through a temporary pool instead of replacing the cluster. `max_pods = 250` (the overlay default, set explicitly). KEDA (M4) scales pods; the cluster autoscaler scales nodes, capped at 2 for cost.
+  - **Control-plane identity:** user-assigned `id-gyazo-aks-<env>` with **Network Contributor** on the `snet-aks` subnet and on the gateway public IP (both `principal_type = ServicePrincipal`; the cluster `depends_on` both grants). The kubelet identity gets **AcrPull** on the registry. These roles are allowlisted for ci-apply in bootstrap.
+  - **Gateway public IP (D-011):** `pip-gyazo-<env>`, Standard, Static, label `gyazo-<env>-<suffix>`, zone-redundant (zones set explicitly so a server-side default can't show up as a replacement). It lives in `modules/network`, in `rg-gyazo-<env>`, so the hostname survives cluster rebuilds.
+  - **Network policy:** Azure CNI Powered by Cilium on overlay: `network_data_plane = "cilium"` + `network_policy = "cilium"`. `advanced_networking` (ACNS) is left unset because it's paid.
+    - *Alternatives:* Azure NPM (Linux NPM retires 2028-09-30); Calico (the fallback if Cilium causes problems); no network policy (weak posture, pods can reach each other freely).
+    - *Consequences:* changing the dataplane later reimages every node, and some network-profile changes force cluster replacement. No FQDN or L7 policy (those are ACNS-only). For in-cluster traffic, write policies with `namespaceSelector` + `podSelector`, not `ipBlock`. Policies don't apply to `hostNetwork` pods. The Cilium agent takes roughly 200-400 MiB per node (estimate, to be checked with `kubectl top` after apply).
+    - *Sources:* learn.microsoft.com/azure/aks/use-network-policies, learn.microsoft.com/azure/aks/azure-cni-powered-by-cilium (researcher, 2026-11-24).
+  - **ACR:** pinned to `role_assignment_mode = "LegacyRegistryPermissions"`. The ABAC "repository permissions" mode ignores AcrPull and is slated to become the default.
+- **Review rule (IAM):** Network Contributor (newly allowlisted for ci-apply) may be assigned **only** to the AKS control-plane UAMI, and **only** at the `snet-aks` and gateway-PIP resource scopes. Never at RG scope, and never to the api/worker identities. The ci-apply ABAC condition can't enforce a scope narrower than the RG, so the reviewer enforces this on every diff. The same rule is a comment next to both assignments in `modules/aks`.
+- **Review rule (in-cluster RBAC, M3+ manifests):** never create a `RoleBinding` or `ClusterRoleBinding` to `system:authenticated` or to broad Entra groups. Azure RBAC and Kubernetes RBAC are additive. Every Entra principal that can fetch a kubeconfig (including ci-plan through its Cluster User Role) authenticates as `system:authenticated`, so it would gain those in-cluster rights.
+- **Alternatives:**
+  - Standard tier (~$73/month, SLA): no value for a one-week demo.
+  - Private cluster: needs a jumpbox/VPN (D-007).
+  - Authorized IPs in tfvars or a CI secret: the IP lands in a public repo or gets reset by every CI apply.
+  - Separate system and user pools: twice the minimum node cost.
+  - Ephemeral OS disk: not supported on Dsv6.
+  - System-assigned control-plane identity: can't be granted Network Contributor before the cluster exists, so creating the cluster would race the grant.
+  - Network Contributor at RG scope in bootstrap: much broader than needed.
+  - A custom role with only `subnets/join` + `publicIPAddresses/join`: tighter, but needs a custom role definition and a new allowlist entry. Revisit if the review rule proves hard to hold.
+- **Why:** cheapest shape that still demonstrates workload identity, Entra-only cluster access, KV CSI, an autoscaler and managed upgrades.
+- **Cost (re-checked 2026-11-24):**
+  - **Per node:** about $3/day.
+    - D2s_v6 at $0.114/h ≈ $2.74/day (**verified**: Azure retail prices API, researcher).
+    - 64 GB Premium SSD OS disk ≈ $0.3/day (**unverified**).
+  - **Fixed:** about $0.85/day.
+    - Standard load balancer ≈ $0.6/day (**unverified**).
+    - Two Standard public IPs (gateway + AKS outbound) ≈ $0.24/day (**unverified**).
+  - **Total:** about $4/day with 1 node, always on. The Free control plane costs nothing. `az aks stop` saves node compute only. The public IPs (gateway + AKS outbound), the load balancer, disks, ACR and storage keep billing (D-017).
+- **Risks:**
+  - Microsoft Learn says system pools should have ≥ 2 nodes for resilience. Min 1 conflicts with that guidance, and is accepted for cost. Upgrades surge to 2.
+  - The PIP-scoped Network Contributor grant is **untested until the first gateway Service (M3)**; it is inferred, not verified. If the cloud provider looks the IP up by address (`azure-load-balancer-ipv4` + `azure-load-balancer-resource-group`), it may need to list public IPs at RG scope. Mitigation: reference the IP by name (`service.beta.kubernetes.io/azure-pip-name`, a direct GET) in the M3 gateway Service. If that still fails, a broader grant is a **new owner decision**: the review rule above forbids RG scope as-is.
+  - Encryption at host is off (checkov CKV_AZURE_227 skipped). It needs the `EncryptionAtHost` subscription feature registration, which is a subscription change. **Residual risk:** the node temp disk and caches (`emptyDir`, where uploads may buffer) are **not** host-encrypted. Only the managed OS disk has platform encryption.
 

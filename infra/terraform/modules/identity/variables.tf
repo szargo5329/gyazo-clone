@@ -38,6 +38,29 @@ variable "key_vault_id" {
   type        = string
 }
 
+variable "oidc_issuer_url" {
+  description = "OIDC issuer URL of the AKS cluster (issuer of the federated credentials)."
+  type        = string
+}
+
+variable "k8s_namespace" {
+  description = "Kubernetes namespace of the app service accounts."
+  type        = string
+  default     = "gyazo"
+}
+
+variable "api_service_account" {
+  description = "Kubernetes service account name used by the API pods."
+  type        = string
+  default     = "api"
+}
+
+variable "worker_service_account" {
+  description = "Kubernetes service account name used by the worker pods."
+  type        = string
+  default     = "worker"
+}
+
 variable "tags" {
   description = "Tags applied to every taggable resource."
   type        = map(string)
