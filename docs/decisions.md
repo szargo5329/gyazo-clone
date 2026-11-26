@@ -212,6 +212,49 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - `/security-review` only at milestone close: findings would arrive after merge, when they cost more to fix.
 - **Trade-off:** One extra step on app PRs. The checklist is **untested** until the next app PR uses it.
 
+## D-024 CI image push identity — Accepted
+- **Context:** M3 needs CI to build the app images and push them to ACR (`role_assignment_mode = "LegacyRegistryPermissions"`, D-021). No CI identity can push today: ci-plan is read-only, and ci-apply's ABAC condition can't grant itself or other CI identities anything.
+- **Decision:** A third user-assigned identity `id-gyazo-ci-push` in `infra/bootstrap`.
+  - **Trust:** federated credential `github-environment-push`, subject `repo:<owner>@<id>/<repo>@<id>:environment:push`. Jobs that declare an environment get the `:environment:<name>` subject even when triggered by `push` or `schedule`.
+  - **GitHub environment `push`:** main-only deployment branch policy, no reviewers. Configured in GitHub repo settings, not Terraform (an unmanaged control). Created before the bootstrap apply, because GitHub auto-creates a rule-less environment the first time a workflow names it. **Verified:** `gh api .../environments` on 2026-11-26 shows `push` and `aks-power` with the custom branch policy `main`.
+  - **Role:** **AcrPush** (pull + push, no delete), the documented CI push role in Legacy mode. The Repository Writer roles only apply in ABAC repository-permissions mode.
+  - **Scope:** `rg-gyazo-<env>`, not the registry. Bootstrap runs before the main config creates the ACR on a rebuild, so a registry-scoped data lookup would break ordering. The RG holds exactly one registry.
+  - **Review rule:** only one registry may exist in `rg-gyazo-<env>`; a second one would be pushable by CI. Not enforced in code: tracked as an M3 known gap (tighten to registry scope or add a check before M3 closes).
+  - The ci-apply ABAC condition now excludes all four CI identities, so ci-apply can't widen ci-push.
+- **Alternatives:**
+  - ACR admin user: rejected, a shared long-lived secret (D-005).
+  - Service principal with a client secret: rejected, a long-lived secret.
+  - Reuse ci-apply: rejected. Apply's identity would become a registry writer, and every image push would need the human apply gate.
+  - Registry-scoped assignment: tighter, but breaks bootstrap-before-main ordering on a rebuild (see Scope).
+- **Why:** no secrets, the smallest built-in role that can push, and image pushes from `main` don't wait for the apply approval.
+- **Trade-off:** any workflow on `main` that uses the `push` environment can push (and overwrite tags) in the registry. Tag immutability and image signing are not in scope. Mitigation: the cluster deploys by digest (the kustomization pins `@sha256:`), so overwriting a tag doesn't change what runs. A PR merged to `main` can still push a new image, which is why merges need review.
+- **Open items:**
+  - `az acr login` may also need a control-plane read role on the registry. **Untested**; no extra role added. The first live push run decides, and any added role is recorded here. To avoid needing one, `build.yml` skips the ARM lookup: it exchanges the Entra token for an ACR refresh token at `https://<registry>.azurecr.io/oauth2/exchange` (the documented ACR AAD flow) and runs `docker login` with it. Fallback if that fails: Reader on the registry.
+  - Live OIDC login and push: **untested** until the push workflow runs.
+
+## D-025 Nightly AKS stop via scheduled workflow — Accepted
+- **Context:** The cluster costs about $4/day with one node, always on (D-021). Stopping it by hand when idle depends on remembering to. The budget (D-017) only alerts, it never stops spending.
+- **Decision:** A scheduled GitHub Actions workflow stops the cluster nightly (and a manual dispatch can start it), using a fourth identity `id-gyazo-ci-aks-power` from `infra/bootstrap`.
+  - **Trust:** federated credential `github-environment-aks-power`, subject `...:environment:aks-power`. Environment `aks-power`: main-only deployment branch policy, no reviewers (configured in GitHub).
+  - **Role:** custom `gyazo AKS start-stop (<env>)`, defined and assignable only at `rg-gyazo-<env>`, with exactly `managedClusters/read`, `managedClusters/start/action` and `managedClusters/stop/action`. No data actions, so no credential or in-cluster access.
+  - **Scope:** RG, so the grant survives a cluster rebuild. It covers only clusters in that RG.
+  - The ci-apply ABAC condition excludes this identity too.
+- **Alternatives:**
+  - Azure Automation runbook: 500 free job-minutes/month, but a new resource plus more IAM (its own identity and role).
+  - Logic App: also a new resource and identity, for one API call.
+  - *Azure Kubernetes Service Contributor Role* (built-in): too broad, it also allows cluster update and delete. No built-in role is narrower.
+  - An agent on standby: rejected. Agents only exist inside a session, and every cloud change would need approval anyway. Deterministic automation is the right tool.
+- **Why:** no new Azure resources, no secrets, and the narrowest possible role.
+- **Trade-offs:**
+  - GitHub cron is best-effort (runs can be delayed or dropped) and is disabled after 60 days without repo activity in public repos.
+  - Stopping saves node compute only. Disks, the two Standard public IPs, the load balancer, ACR and storage keep billing.
+  - AKS allows a cluster to stay stopped for at most 12 months.
+  - Admission webhooks with wildcard rules can block a stop.
+  - Allow 15–30 minutes between a stop and the next start.
+- **Open items:**
+  - `Microsoft.Resources/subscriptions/operationresults/read` may be needed for az's long-running-operation polling. **Untested**; add it only if the live run returns 403.
+  - The workflow itself and a live stop/start run: **untested**.
+
 ## D-026 Image build, scan and supply-chain pins (M3) — Accepted
 - **Context:** M3 deploys the first images to AKS. The M2 gap said base images were pinned by tag only and nothing scanned them. In March 2026 the `aquasecurity/trivy-action` tags 0.0.1–0.34.2 were force-pushed to malicious commits (CVE-2026-33634), so how the scanner itself is pinned matters too.
 - **Decision:**
