@@ -21,13 +21,19 @@ spec:
   hostnames:
     - gyazo-dev-px0x8.centralus.cloudapp.azure.com
   rules:
-    # No matches = PathPrefix "/": everything that isn't /upload.
+    # No matches = PathPrefix "/": everything that isn't /upload. That includes /healthz
+    # and /readyz on purpose: they return only {"status": ...} with no error detail (the
+    # readiness failure is logged, not returned), see deploy/edge/README.md.
     - backendRefs:
         - name: api
           port: 80
 ---
-# Exact path /upload, every method. An Exact match takes precedence over the PathPrefix
-# "/" route above. Matching all methods (not just POST) means a PUT or PATCH to /upload
+# Exact path /upload, every method. This is the app's only write path today. Any future
+# write route (or a renamed upload path) needs its own limited HTTPRoute + policy like this
+# one, or it falls through to the unlimited catch-all route. "/upload/" doesn't need one:
+# it never reaches the upload handler. The static-files mount at "/" answers it with 405
+# (checked with FastAPI's TestClient, 2026-11-27).
+# An Exact match takes precedence over the PathPrefix "/" route above. Matching all methods (not just POST) means a PUT or PATCH to /upload
 # can't sidestep the size and rate limits through the catch-all route.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

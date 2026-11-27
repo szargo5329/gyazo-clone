@@ -1,5 +1,7 @@
 # Upload limits at the gateway (spec "Abuse limits", D-008, D-028). Field names checked
 # against the v1.10.0 CRD schema (gateway-crds-helm) and the translator source.
+# Scope: only the api-upload route (Exact /upload), today's single write path. A future
+# write route needs its own route and policy (see routes.yaml); it is not covered here.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
 metadata:

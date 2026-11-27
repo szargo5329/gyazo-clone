@@ -75,7 +75,7 @@ spec:
   # that address for rate limiting and appends it to X-Forwarded-For. Trusting any
   # client-supplied X-Forwarded-For hop would let a client pick its own rate-limit key.
 ---
-# Every plain-HTTP request is redirected to HTTPS with a 301, except the ACME challenge:
+# Every plain-HTTP request is redirected to HTTPS with a 308, except the ACME challenge:
 # cert-manager's solver route matches the exact path /.well-known/acme-challenge/<token>,
 # and Gateway API gives an Exact path match precedence over this route's implicit
 # PathPrefix "/" across routes on the same listener, so the challenge is never redirected.
@@ -95,6 +95,10 @@ spec:
         - type: RequestRedirect
           requestRedirect:
             scheme: https
-            statusCode: 301
+            # 308, not 301: a permanent redirect that keeps the method and body (a 301 lets
+            # clients turn a POST into a GET). The redirect is for browsers; API clients
+            # such as ShareX must be configured with https:// directly, because a plain-http
+            # upload has already sent the API key in cleartext by the time it is redirected.
+            statusCode: 308
             # No port: for scheme https the redirect uses the default 443, so Location
             # carries no port.

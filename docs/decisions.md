@@ -316,7 +316,7 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
     - LoadBalancer Service bound **by name** to `pip-gyazo-dev` in `rg-gyazo-dev` (D-011, D-021).
     - `externalTrafficPolicy: Local`, the EG default, stated explicitly. It preserves the client source IP, which the per-IP rate limit depends on.
   - **Gateway `edge/public`:**
-    - Listener `http:80`: routes from `edge` only. It carries the 301 redirect to HTTPS and cert-manager's solver route. The solver's Exact path match outranks the redirect's PathPrefix `/`.
+    - Listener `http:80`: routes from `edge` only. It carries the 308 redirect to HTTPS (method-preserving; for browsers only, since API clients must use https so the key never crosses plain http) and cert-manager's solver route. The solver's Exact path match outranks the redirect's PathPrefix `/`.
     - Listener `https:443`: routes from `gyazo` only. TLS terminates with Secret `gyazo-tls`, and the annotation `cert-manager.io/cluster-issuer: letsencrypt-staging` starts on staging.
     - Both listeners are pinned to the hostname. No ReferenceGrant is needed: routes reference same-namespace Services, and the cross-namespace parentRef is allowed by `allowedRoutes`.
   - **ClusterIssuers:** staging and prod, HTTP-01 through `gatewayHTTPRoute` (parentRef `public`, sectionName `http`).
@@ -363,7 +363,7 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
     - Through the proxy (in-cluster client, self-signed cert, stub backend):
       - 10,551,296 bytes → 200; one byte more → 413, also with chunked encoding and with PUT; other paths are not limited.
       - 12 requests to `/upload` → 10×200 then 429 with `retry-after`.
-      - HTTP → 301 to `https://<host>/...`.
+      - HTTP → 301 to `https://<host>/...` (tested with 301; changed to 308 after review, schema-validated, not re-run end to end).
       - Envoy appended the real peer to a client-supplied `X-Forwarded-For`.
       - A non-proxy pod in `envoy-gateway-system` was refused by the api NetworkPolicy.
     - The cert-manager controller was scaled to 0 for the test, so no ACME traffic was sent.

@@ -13,7 +13,10 @@ client ──► pip-gyazo-dev (static, DNS label) ──► Azure LB ──► 
 - **cert-manager v1.21.3** gets a Let's Encrypt certificate through an HTTP-01 challenge
   served by the same Gateway (the analogue of ACM, except we run the issuer ourselves).
 - At the gateway, `/upload` gets a request-body cap (10 MiB + 64 KiB, buffered) and a
-  per-client-IP rate limit (10/minute). Every HTTP request is redirected to HTTPS.
+  per-client-IP rate limit (10/minute). Every HTTP request is redirected to HTTPS (308).
+- **Clients must use `https://`.** The redirect is for browsers. ShareX and any other API
+  client must be configured with the https URL: a plain-http upload has already sent the
+  `X-API-Key` header in cleartext by the time the 308 comes back.
 - The AKS managed Gateway API add-on is deliberately **not** enabled: it would install its
   own copy of the Gateway API CRDs and fight the ones installed here (D-008).
 
@@ -49,6 +52,11 @@ Bump the CRDs chart and the Envoy Gateway chart together, always to the same ver
    AKS control-plane identity Network Contributor on it (D-021).
 4. **Owner approval**: steps 0-4 change the cluster and create an Azure load-balancer
    rule on the public IP (CLAUDE.md guardrails).
+5. **Before step 4 (public exposure):** CI has built the api image from the current
+   `app/api/Dockerfile` (with `--forwarded-allow-ips`), `deploy/manifests/kustomization.yaml`
+   is repinned to that digest, and `kubectl apply -k deploy/manifests` has been run. Without
+   it the api sees every request as coming from the proxy pod: wrong client IPs in logs and
+   `http` instead of `https` as the request scheme.
 
 ## Install (in this order)
 Run from the repo root. Each step is idempotent.
@@ -74,7 +82,8 @@ helm install envoy-gateway oci://docker.io/envoyproxy/gateway-helm --version v1.
 helm install cert-manager oci://quay.io/jetstack/charts/cert-manager --version v1.21.3 \
   -n cert-manager -f deploy/edge/values/cert-manager.yaml --wait
 
-# 4. GatewayClass, Gateway, issuers, routes, policies.
+# 4. GatewayClass, Gateway, issuers, routes, policies. Only after prerequisite 5 (api image
+#    with --forwarded-allow-ips deployed): this step makes the app public.
 kubectl apply -k deploy/edge --dry-run=server
 kubectl apply -k deploy/edge
 ```
@@ -113,7 +122,7 @@ kubectl -n edge get certificate,certificaterequest,order,challenge
 kubectl -n edge describe challenge        # while pending: self-check / reachability errors show here
 
 H=gyazo-dev-px0x8.centralus.cloudapp.azure.com
-curl -sI http://$H/i/x                      # 301, Location: https://$H/i/x
+curl -sI http://$H/i/x                      # 308, Location: https://$H/i/x
 curl -svk https://$H/healthz 2>&1 | grep -E "issuer|HTTP/"   # staging issuer name contains "(STAGING)"
 
 # Rate limit: no API key needed, the limit runs before the app (expect 10x 401, then 429)
@@ -123,13 +132,33 @@ for i in $(seq 1 12); do curl -sk -o /dev/null -w "%{http_code} " -X POST https:
 head -c 10551297 /dev/zero | curl -sk -o /dev/null -w "%{http_code}\n" -X POST \
   -H "Transfer-Encoding: chunked" --data-binary @- https://$H/upload
 
-# Client IP: the api access log should show your public IP, not a 10.244.x.x address
-# (needs an api image built with --forwarded-allow-ips, see app/api/Dockerfile)
+# Client IP: the api access log should show your public IP, not a 10.244.x.x address.
+# Depends on prerequisite 5: with an older api image (no --forwarded-allow-ips) this shows
+# the proxy pod's 10.244.x.x address, and that is the image, not the gateway.
 kubectl -n gyazo logs deploy/api --tail=5
 
 # End to end once the production certificate is in place (smoke.py verifies TLS):
 OWNER_API_KEY=<key> PUBLIC_BASE_URL=https://$H uv run python scripts/smoke.py https://$H
 ```
+
+## Troubleshooting
+- **Gateway has no address, Envoy Service stays `<pending>`:** run
+  `kubectl -n envoy-gateway-system describe svc -l gateway.envoyproxy.io/owning-gateway-name=public`.
+  If the events show `403 AuthorizationFailed` on reading or listing public IPs in
+  `rg-gyazo-dev`, the PIP-scoped Network Contributor grant from D-021 is not enough for the
+  cloud provider. Widening it is an **owner IAM decision** (a Terraform change in
+  `modules/aks` + apply, reviewed against the D-021 review rule). Do not work around it
+  (no manual role assignment, no switching to an auto-created IP, which would lose the DNS label).
+- **Certificate stuck pending:** `kubectl -n edge describe challenge`. A failing self-check
+  usually means the http listener or the solver route isn't reachable from the cluster.
+
+## Public health endpoints
+`/healthz` and `/readyz` are reachable through the Gateway (catch-all route). They return
+only `{"status": "ok"}` and `{"status": "ready"}` or `{"status": "unavailable"}` with a 503.
+The failure reason is logged (`log.exception`), never returned (`app/api/gyazo_api/main.py`).
+They leak nothing but up/down. Each `/readyz` call does one storage ping, so an anonymous
+caller can generate storage calls at the general request rate (not rate-limited; fine at
+demo scale, revisit with the M4 threat review).
 
 ## Staging to production (once)
 `*.cloudapp.azure.com` is not on the Public Suffix List, so Let's Encrypt counts our
