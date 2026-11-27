@@ -131,6 +131,7 @@ Known gaps:
 | uvicorn trusts `X-Forwarded-For`/`-Proto` from the whole pod CIDR `10.244.0.0/16`, not only the Envoy proxy pods (D-028). A compromised pod that can reach the api could forge its client IP, but NetworkPolicy already limits api ingress to the proxy pods. | orchestrator | M4 threat review |
 | Envoy Gateway and cert-manager images are pinned by tag through the chart version, not by digest; `envoy-gateway-system` enforces PSA baseline until the AKS install shows no restricted warnings (D-028). | orchestrator | M3 close (after the first AKS install) |
 | `--forwarded-allow-ips` only takes effect after CI builds the new api image and its digest is repinned in `deploy/manifests/kustomization.yaml`. | orchestrator | Before the gateway goes public (M3) |
+| D-029 public-IP reader grant is design-verified only (cloud-provider-azure source). Confirm when the first gateway LoadBalancer Service gets the static IP (no `AuthorizationFailed` in `kubectl describe svc`). ci-apply's ABAC allows this role to go to any non-CI principal in the RG; review enforces the intended assignee. | orchestrator | First edge install (M3) |
 | Owner's Key Vault Secrets Officer role (vault scope) was assigned by hand on 2026-11-27 to set `owner-api-key`; it is not in Terraform (drift). Codify it in the keyvault module or record why it stays manual. | orchestrator proposes, owner decides (IAM) | M3 close |
 | `scripts/smoke.py` runs by hand through a port-forward; there is no post-deploy smoke in CI. | orchestrator | M6 (ArgoCD post-sync) |
 
