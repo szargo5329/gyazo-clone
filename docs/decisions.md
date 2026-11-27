@@ -252,8 +252,7 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - Admission webhooks with wildcard rules can block a stop.
   - Allow 15–30 minutes between a stop and the next start.
 - **Open items:**
-  - `Microsoft.Resources/subscriptions/operationresults/read` may be needed for az's long-running-operation polling. **Untested**; add it only if the live run returns 403.
-  - The workflow itself and a live stop/start run: **untested**.
+  - ~~`operationresults/read` may be needed~~ Not needed. **Verified:** scheduled stop run 46034881155 (2026-11-27, about 10 hours after the 06:17 UTC cron time; GitHub cron is best-effort) left the cluster `Stopped`, and `workflow_dispatch` start run 46049852772 brought it back to `Running`, with no 403 on either.
 
 ## D-026 Image build, scan and supply-chain pins (M3) — Accepted
 - **Context:** M3 deploys the first images to AKS. The M2 gap said base images were pinned by tag only and nothing scanned them. In March 2026 the `aquasecurity/trivy-action` tags 0.0.1–0.34.2 were force-pushed to malicious commits (CVE-2026-33634), so how the scanner itself is pinned matters too.
