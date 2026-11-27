@@ -14,7 +14,7 @@ metadata:
     app.kubernetes.io/name: gyazo-api
     app.kubernetes.io/component: api
   annotations:
-    checkov.io/skip1: CKV_K8S_43=The image digest is set at deploy time by kustomize images (CI runs kustomize edit set image with the pushed digest); checkov scans the raw file
+    checkov.io/skip1: CKV_K8S_43=Pinned by digest via the kustomization.yaml images transformer; checkov scans the raw file, which carries a placeholder tag. CI will maintain the digest later
     checkov.io/skip2: CKV_K8S_15=IfNotPresent on purpose; images are pinned by digest, so a cached image is the exact image, and a restart doesn't depend on ACR being reachable
 spec:
   replicas: 1
@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: gyazo-api:placeholder-set-by-ci # name/tag rewritten by kustomization.yaml images
+          image: gyazo-api:placeholder-set-by-kustomize # name and digest rewritten by kustomization.yaml images
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
