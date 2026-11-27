@@ -14,7 +14,12 @@ BLOCKED = [
     r"(^|[\\/])id_(rsa|ed25519)$",
     r"secret[^\\/]*\.(ya?ml|json)$",
 ]
-ALLOWED = [r"\.env\.example$", r"[\\/]envs[\\/][^\\/]+[\\/]terraform\.tfvars$"]
+ALLOWED = [
+    r"\.env\.example$",
+    r"[\\/]envs[\\/][^\\/]+[\\/]terraform\.tfvars$",
+    # Names a Key Vault secret, never holds a value (Secrets Store CSI config).
+    r"[\\/]deploy[\\/]manifests[\\/]secretproviderclass\.yaml$",
+]
 
 
 def main() -> int:
