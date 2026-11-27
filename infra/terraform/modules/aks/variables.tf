@@ -8,6 +8,16 @@ variable "resource_group_name" {
   type        = string
 }
 
+variable "resource_group_id" {
+  description = "ID of the env resource group. The control-plane identity gets the custom public IP reader role (D-029) at this scope."
+  type        = string
+
+  validation {
+    condition     = can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+$", var.resource_group_id))
+    error_message = "The resource_group_id value must be a resource group ID (the reader role is granted at RG scope only, D-029)."
+  }
+}
+
 variable "location" {
   description = "Azure region."
   type        = string

@@ -18,6 +18,13 @@ locals {
   # Review rule (ABAC can't enforce scope): Network Contributor is for the AKS
   # control-plane UAMI only, scoped to snet-aks and the gateway PIP. Never rg scope,
   # never the api/worker identities.
+  #
+  # The custom role "gyazo AKS public IP reader (<env>)" (defined below, D-029) is also
+  # allowlisted: the cloud provider lists public IPs in the PIP's resource group, so the
+  # control-plane UAMI needs publicIPAddresses/read at rg scope. Read-only, one action.
+  # ABAC can't pin it to that UAMI (it is created by the main config, so its principal ID
+  # isn't known here and changes on rebuild). Review rule: assign it only to the AKS
+  # control-plane UAMI, only at rg-<env> scope.
   delegable_role_names = toset([
     "Network Contributor",
     "Storage Blob Data Contributor",
@@ -29,9 +36,12 @@ locals {
     "AcrPull",
   ])
 
-  delegable_role_guids = join(", ", sort([
-    for name in local.delegable_role_names : data.azurerm_role_definition.delegable[name].role_definition_id
-  ]))
+  # Built-in roles (looked up by name) plus the custom roles defined in this file that
+  # the main config assigns.
+  delegable_role_guids = join(", ", sort(concat(
+    [for name in local.delegable_role_names : data.azurerm_role_definition.delegable[name].role_definition_id],
+    [azurerm_role_definition.aks_pip_reader.role_definition_id],
+  )))
 
   # Constrained-delegation condition (condition_version 2.0), in the documented format:
   # writes are checked against the requested role, deletes against the existing one.
@@ -190,7 +200,12 @@ resource "azurerm_role_assignment" "ci_apply_rbac_admin" {
         for name in local.delegable_role_names :
         can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", data.azurerm_role_definition.delegable[name].role_definition_id))
       ])
-      error_message = "Every allowlisted role must resolve to a bare role definition GUID for the ABAC condition."
+      error_message = "Every allowlisted built-in role must resolve to a bare role definition GUID for the ABAC condition."
+    }
+
+    precondition {
+      condition     = can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", azurerm_role_definition.aks_pip_reader.role_definition_id))
+      error_message = "The custom public IP reader role must resolve to a bare role definition GUID for the ABAC condition."
     }
   }
 }
@@ -250,4 +265,29 @@ resource "azurerm_role_assignment" "ci_aks_power_start_stop" {
   principal_id       = azurerm_user_assigned_identity.ci_aks_power.principal_id
   principal_type     = "ServicePrincipal"
   description        = "Scheduled AKS stop and manual start for clusters in this env resource group."
+}
+
+# ---------------------------------------------------------------------------
+# AKS control-plane identity: read public IPs in rg-<env> (D-029). Assigned by the
+# main config (modules/aks), so it is on the ci-apply allowlist above.
+# ---------------------------------------------------------------------------
+
+# cloud-provider-azure lists public IPs in the PIP's resource group
+# (azure-load-balancer-resource-group) when reconciling a LoadBalancer Service, even
+# when the IP is referenced by name, so the PIP-scoped Network Contributor grant alone
+# 403s on the list. No built-in role is this narrow: Reader reads everything in the RG,
+# Network Contributor at RG scope can change the VNet and NSGs.
+resource "azurerm_role_definition" "aks_pip_reader" {
+  name        = "gyazo AKS public IP reader (${var.env})"
+  scope       = azurerm_resource_group.env.id
+  description = "Read (get/list) public IP addresses in rg-gyazo-${var.env}. No write, delete or join."
+
+  permissions {
+    actions = [
+      "Microsoft.Network/publicIPAddresses/read",
+    ]
+    not_actions = []
+  }
+
+  assignable_scopes = [azurerm_resource_group.env.id]
 }

@@ -7,6 +7,7 @@ One-time, **human-only** Terraform config for the identity plane:
 - `id-gyazo-ci-plan` (read-only) and `id-gyazo-ci-apply` (write to `rg-gyazo-dev` only), each with a GitHub OIDC federated credential bound to a GitHub Environment (`plan` / `apply`). See `docs/decisions.md` D-012.
 - `id-gyazo-ci-push`: AcrPush on `rg-gyazo-dev` (push app images to the one registry there; no delete). Environment `push`. See D-024.
 - `id-gyazo-ci-aks-power`: custom role `gyazo AKS start-stop (dev)` on `rg-gyazo-dev` (read/start/stop AKS only). Environment `aks-power`, used by the nightly stop workflow. See D-025.
+- Custom role `gyazo AKS public IP reader (dev)` (only `publicIPAddresses/read`, assignable only at `rg-gyazo-dev`), on the ci-apply allowlist. Not assigned here: the main config assigns it to the AKS control-plane identity. See D-029.
 
 Anything that grants permissions to CI lives here, so CI can never widen its own access: the main config has no way to change these role assignments. `ci-apply` can create role assignments in `rg-gyazo-dev`, but an ABAC condition limits it to a fixed allowlist of roles, granted only to service principals and never to any of the four CI identities (see `roles.tf`).
 
@@ -35,6 +36,8 @@ Non-secret inputs (region, owner tag, GitHub repo) are variable defaults in `var
 Create the GitHub Environments that new federated credentials trust (step 2 below) **before** the apply, with their main-only branch policy. GitHub auto-creates an environment with no rules the first time a workflow names it, so a branch could otherwise mint a token for that subject first. `push` and `aks-power` were created this way on 2026-11-26.
 
 A brand-new custom role can fail its first assignment with `RoleDefinitionDoesNotExist` (Entra/ARM propagation). Re-running the apply fixes it.
+
+Roles the main config assigns (D-021, D-029) must be allowlisted here **and applied** before the main config's next CI apply, or that apply is denied partway through. Order: bootstrap apply (owner, local) → merge → CI apply of `infra/terraform/envs/dev` (owner approves the gate).
 
 ## After apply
 
