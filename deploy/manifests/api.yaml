@@ -1,0 +1,147 @@
+# API: FastAPI + built React UI (D-002), behind a ClusterIP Service. The M3 gateway
+# (Envoy Gateway, separate change) routes to it; until then use kubectl port-forward.
+#
+# Replicas: 1 for now. The system pool runs a single D2s_v6 node with about 750m CPU
+# unrequested after the AKS system pods (kubectl describe node, 2026-11-26), and the
+# gateway and monitoring still need room. Raise to 2 and add a PodDisruptionBudget
+# (minAvailable 1) when the node pool allows it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: gyazo
+  labels:
+    app.kubernetes.io/name: gyazo-api
+    app.kubernetes.io/component: api
+  annotations:
+    checkov.io/skip1: CKV_K8S_43=Pinned by digest via the kustomization.yaml images transformer; checkov scans the raw file, which carries a placeholder tag. CI will maintain the digest later
+    checkov.io/skip2: CKV_K8S_15=IfNotPresent on purpose; images are pinned by digest, so a cached image is the exact image, and a restart doesn't depend on ACR being reachable
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gyazo-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gyazo-api
+        app.kubernetes.io/component: api
+        # Opt-in for the workload identity webhook: it injects AZURE_CLIENT_ID,
+        # AZURE_TENANT_ID, AZURE_FEDERATED_TOKEN_FILE, AZURE_AUTHORITY_HOST and the
+        # projected token volume, which DefaultAzureCredential picks up (D-005).
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: api
+      automountServiceAccountToken: false # see serviceaccounts.yaml
+      enableServiceLinks: false # no docker-link env vars for every Service in the namespace
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001 # matches USER 10001 in app/api/Dockerfile
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: gyazo-api:placeholder-set-by-kustomize # name and digest rewritten by kustomization.yaml images
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: STORAGE_AUTH_MODE
+              value: entra # workload identity + user-delegation SAS (D-019)
+            - name: STORAGE_ACCOUNT_NAME
+              value: stgyazodevpx0x8
+            # Same as the config.py defaults and the Terraform storage module; explicit
+            # so a changed default can't point the pod somewhere else.
+            - name: STORAGE_CONTAINER
+              value: images
+            - name: STORAGE_QUEUE
+              value: image-jobs
+            - name: STORAGE_TABLE
+              value: images
+            - name: PUBLIC_BASE_URL
+              value: https://gyazo-dev-px0x8.centralus.cloudapp.azure.com
+            - name: OWNER_API_KEY_FILE
+              value: /mnt/secrets-store/owner-api-key
+            # The root filesystem is read-only. Dependencies are precompiled in the image
+            # (UV_COMPILE_BYTECODE); the workspace package is not, so stop Python trying
+            # to write __pycache__ next to it.
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            # No ENSURE_RESOURCES: Terraform owns the container, queue and table.
+          # Liveness: /healthz returns 200 without touching Azure, so a storage or Entra
+          # outage never restarts the pod. Readiness: /readyz pings storage, so an outage
+          # takes the pod out of the Service instead.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5 # a storage round trip, including the first Entra token fetch
+            failureThreshold: 3
+          # Sizing for one 2-vCPU node shared with the system pods (about 750m CPU left
+          # to request): a single uvicorn process idles near 100Mi; one 10 MiB upload is
+          # held in memory once more while it is checked and sent to Blob. The CPU limit
+          # caps a busy pod at half a core so it can't starve the node.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Starlette spools multipart uploads over 1 MiB to a temp file.
+            - name: tmp
+              mountPath: /tmp
+            - name: owner-api-key
+              mountPath: /mnt/secrets-store
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            # A few concurrent 10 MiB uploads. Node disk, not memory (no tmpfs, so it
+            # doesn't count against the memory limit). Not host-encrypted (D-021 risk).
+            sizeLimit: 64Mi
+        - name: owner-api-key
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: owner-api-key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: gyazo
+  labels:
+    app.kubernetes.io/name: gyazo-api
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gyazo-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

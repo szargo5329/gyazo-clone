@@ -110,7 +110,7 @@ Known gaps:
 
 | Gap | Owner | Close by |
 |---|---|---|
-| Entra signing path (user-delegation key) untested: Azurite can't issue one (D-019). | orchestrator | First AKS deploy (M3) |
+| ~~Entra signing path (user-delegation key) untested: Azurite can't issue one (D-019).~~ Closed 2026-11-27. **Verified:** `scripts/smoke.py` through `kubectl port-forward` against the first AKS deploy (PR #22): 15/15 passed, including the user-delegation SAS returning identical bytes and a tampered SAS refused with 403. | orchestrator | Closed at the first AKS deploy (M3) |
 | Ingress rate limit on `/upload` (spec) not in M2; it belongs to the gateway. | orchestrator | M3 (Envoy Gateway) |
 | ~~Docker base images pinned by tag, not digest; no image scan yet.~~ Fixed in code (D-026): tag@digest pins, Trivy gate in `build.yml`. **Verified locally** (both images scan clean); closes when the first CI run is green. | orchestrator | M3 |
 | Trivy gates on fixable HIGH/CRITICAL only; no periodic full report of unfixed CVEs (D-026). | orchestrator | M4 (with alerts) |
@@ -120,6 +120,14 @@ Known gaps:
 | The early body-size check trusts `Content-Length`; a lying client is still cut off at cap+1 bytes in the route, but Starlette may spool up to the real body. | orchestrator | M3 (gateway request-size limit) |
 | No alerting on stuck jobs: a poison job retried about 2,300 times unnoticed (see lesson). Need an alert on queue message age / dequeue count. | orchestrator | M4 (SLO + alerts) |
 | No image retention policy: images are kept until teardown (storage soft-delete only). Screenshots often hold secrets, so decide how long images (and later overviews) live and enforce it (lifecycle rule or janitor). | orchestrator proposes, owner decides | M4 (janitor), and before M-AI stores any overview |
+| Egress allows TCP 443 to any host (D-027); no FQDN-level restriction. Exfiltration path if a pod is compromised. | orchestrator proposes, owner decides (cost) | M4 threat review (Cilium FQDN policy or firewall) |
+| Cilium CIDR semantics untested: confirm the 443 rule does not allow in-cluster traffic (curl from the api pod to another pod/node IP on 443 must fail). Not run at the first deploy. | orchestrator | M3 close (before the gateway goes public) |
+| Image digests in `kustomization.yaml` are hand-pinned; pinning is not automated. (Digests exist in ACR. **Verified:** both pods pulled them at the first apply on 2026-11-27.) | orchestrator | M6 (ArgoCD) |
+| No `ephemeral-storage` requests/limits on containers (emptyDirs have `sizeLimit` only). | orchestrator | M5 (Helm chart) |
+| Label `app.kubernetes.io/managed-by: kustomize` becomes wrong when Helm takes over. | orchestrator | M5 |
+| Ingress to api admits every pod in `envoy-gateway-system`, not only the proxy pods. | orchestrator | When Envoy Gateway is installed (M3) |
+| Owner's Key Vault Secrets Officer role (vault scope) was assigned by hand on 2026-11-27 to set `owner-api-key`; it is not in Terraform (drift). Codify it in the keyvault module or record why it stays manual. | orchestrator proposes, owner decides (IAM) | M3 close |
+| `scripts/smoke.py` runs by hand through a port-forward; there is no post-deploy smoke in CI. | orchestrator | M6 (ArgoCD post-sync) |
 
 Lesson: the local compose stack had been running images built before the reviewer fixes landed, so a stale test job (fake id, no record) retried about 2,300 times over roughly a day and a half on the old worker. **Verified (compose log, 2026-11-23):** after `docker compose up -d --build`, the worker on `main` logged "no longer exists; dropping job" on the first pass and did not see the job again past the 60 s visibility window (the deleted-record path from D-020). Local stacks need a rebuild after pulling; `docs/local-dev.md` now says so.
 

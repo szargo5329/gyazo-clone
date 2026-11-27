@@ -1,6 +1,6 @@
 """End-to-end smoke test against a running stack (local compose now, AKS from M3).
 
-    OWNER_API_KEY=... uv run python scripts/smoke.py [base_url]
+    OWNER_API_KEY=... [PUBLIC_BASE_URL=...] uv run python scripts/smoke.py [base_url]
 
 Checks: auth and validation reject bad uploads; a real PNG uploads; the worker marks it
 ready with a thumbnail; /i/<id> redirects to a read-only SAS that returns the same bytes;
@@ -43,7 +43,9 @@ def main() -> None:
         check(r.status_code == 201, f"valid PNG -> 201 (got {r.status_code})")
         body = r.json()
         image_id, url = body["id"], body["url"]
-        check(url == f"{base}/i/{image_id}", f"link format {url}")
+        # Behind a port-forward the API still builds links from its PUBLIC_BASE_URL.
+        public = os.environ.get("PUBLIC_BASE_URL", base).rstrip("/")
+        check(url == f"{public}/i/{image_id}", f"link format {url}")
 
         status: dict = {}
         for _ in range(30):

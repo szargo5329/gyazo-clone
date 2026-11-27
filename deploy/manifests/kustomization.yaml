@@ -1,0 +1,30 @@
+# First M3 slice: kubectl apply -k deploy/manifests
+# Plain list of files, no overlays (Helm replaces this in M5). Order here is cosmetic;
+# kubectl/kustomize apply Namespace and ServiceAccounts before workloads anyway.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: gyazo-clone
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false # selectors stay stable if these labels ever change
+
+resources:
+  - namespace.yaml
+  - serviceaccounts.yaml
+  - secretproviderclass.yaml
+  - api.yaml
+  - worker.yaml
+  - networkpolicy.yaml
+
+# Digests from build.yml push run 45877215546 (main commit 719ed24), pinned by hand for
+# now. CI will maintain them later:
+#   kustomize edit set image gyazo-api=acrgyazodevpx0x8.azurecr.io/gyazo-api@sha256:...
+images:
+  - name: gyazo-api
+    newName: acrgyazodevpx0x8.azurecr.io/gyazo-api
+    digest: sha256:a68e4f9c24249c6576dd6fe43da9bec233a2e719ba2dfcdb03f235a4ed503790
+  - name: gyazo-worker
+    newName: acrgyazodevpx0x8.azurecr.io/gyazo-worker
+    digest: sha256:1297931ccf4798f9c54fc20431e191ed5ab3da10acbb623cfbcb9647a5c15e91

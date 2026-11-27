@@ -1,0 +1,21 @@
+# Namespace for the API and worker (M3). Pod Security Admission "restricted" profile:
+# non-root, no privilege escalation, all capabilities dropped, RuntimeDefault seccomp,
+# only safe volume types (csi, emptyDir and projected are allowed, which is all we use).
+#
+# Version choice: enforce is pinned to v1.36, the cluster's minor (D-021; the "patch"
+# upgrade channel never changes the minor on its own). A future minor upgrade then can't
+# silently tighten enforcement and block pods mid-upgrade. audit and warn track "latest",
+# so a stricter profile in a newer release shows up as warnings and audit events first.
+# Bump the enforce version as part of each cluster minor upgrade.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gyazo
+  labels:
+    app.kubernetes.io/part-of: gyazo-clone
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest

@@ -1,0 +1,94 @@
+# Queue worker: receives image jobs, writes a thumbnail and metadata (D-003, D-020).
+# No Service: it only makes outbound calls. KEDA scaling on queue length comes in M4.
+#
+# No probes. The worker has no HTTP server and no heartbeat to check, so any exec probe
+# would only prove that Python starts, which the kubelet already sees as the container
+# running. A crash exits the process and the kubelet restarts it; job errors never
+# raise (handle() catches everything) and receive errors back off and retry.
+# Known gap: a worker that hangs without exiting is not detected. A heartbeat or
+# queue-age alert comes with the worker metrics in M4.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: gyazo
+  labels:
+    app.kubernetes.io/name: gyazo-worker
+    app.kubernetes.io/component: worker
+  annotations:
+    checkov.io/skip1: CKV_K8S_43=Pinned by digest via the kustomization.yaml images transformer; checkov scans the raw file, which carries a placeholder tag. CI will maintain the digest later
+    checkov.io/skip2: CKV_K8S_15=IfNotPresent on purpose; images are pinned by digest, so a cached image is the exact image, and a restart doesn't depend on ACR being reachable
+    checkov.io/skip3: CKV_K8S_8=No HTTP server or heartbeat to probe; a crash exits and restarts; hang detection is an M4 known gap (see file header)
+    checkov.io/skip4: CKV_K8S_9=No HTTP server; the worker is not behind a Service, so readiness gates nothing
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gyazo-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gyazo-worker
+        app.kubernetes.io/component: worker
+        azure.workload.identity/use: "true" # see api.yaml
+    spec:
+      serviceAccountName: worker
+      automountServiceAccountToken: false # see serviceaccounts.yaml
+      enableServiceLinks: false
+      # SIGTERM lets the current job finish (Stopper in worker.py). One job takes
+      # seconds, and an interrupted job reappears after the 60 s visibility timeout
+      # anyway, so the default 30 s grace period is enough.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001 # matches USER 10001 in app/worker/Dockerfile
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: gyazo-worker:placeholder-set-by-kustomize # name and digest rewritten by kustomization.yaml images
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: STORAGE_AUTH_MODE
+              value: entra
+            - name: STORAGE_ACCOUNT_NAME
+              value: stgyazodevpx0x8
+            - name: STORAGE_CONTAINER
+              value: images
+            - name: STORAGE_QUEUE
+              value: image-jobs
+            - name: STORAGE_TABLE
+              value: images
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1" # read-only root filesystem, see api.yaml
+          # Memory is set by the decompression-bomb cap (D-020): a 40 MP image decodes
+          # to about 160 MiB as RGBA, and the RGB/RGBA conversion briefly holds a second
+          # copy, so peak is roughly 320 MiB plus the interpreter. The limit leaves room
+          # for that; the request covers normal screenshots. Thumbnailing is CPU-bound,
+          # so the CPU limit is a full core, but the request stays small (shared node).
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The worker keeps images in memory; /tmp is only there so a library that
+            # asks tempfile for a directory doesn't fail on the read-only root.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

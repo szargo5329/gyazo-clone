@@ -1,0 +1,93 @@
+# Network policy for the gyazo namespace, enforced by Cilium (D-021).
+#
+# Ingress: default deny. Only the API takes traffic, on 8000, and only from the gateway
+# namespace. Kubelet probes and kubectl port-forward aren't blocked (they come from the
+# node, which Cilium allows by default).
+#
+# Egress: default deny too, then two allows:
+#   - DNS to CoreDNS (kube-system, k8s-app=kube-dns), UDP and TCP 53;
+#   - TCP 443 to 0.0.0.0/0 for the API and worker.
+# Every Azure dependency here is a public endpoint on 443: Blob/Queue/Table on
+# stgyazodevpx0x8, and the Entra token exchange at login.microsoftonline.com. (Key
+# Vault is read by the CSI provider on the node, not by the pod.) Cilium without the paid
+# ACNS tier has no FQDN policy (D-021), and these services have no stable IP list, so
+# "443 anywhere" is the honest rule. It doesn't stop exfiltration over HTTPS. What it
+# does stop: plain-HTTP egress, other ports (including IMDS on 169.254.169.254:80, which
+# workload identity doesn't use), and any pod in this namespace other than api/worker
+# getting egress at all. Tighter options: ACNS FQDN policy, or private endpoints plus
+# an egress firewall (both cost money; "Later").
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: gyazo
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress-from-gateway
+  namespace: gyazo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gyazo-api
+  policyTypes: ["Ingress"]
+  ingress:
+    # For the M3 gateway: Envoy Gateway runs its proxy pods in its own namespace by
+    # default. Nothing matches until that namespace exists, so nothing reaches the API
+    # except port-forward. Prometheus scraping gets its own rule with monitoring.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: gyazo
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-azure-https
+  namespace: gyazo
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: ["gyazo-api", "gyazo-worker"]
+  policyTypes: ["Egress"]
+  egress:
+    # Under Cilium, a CIDR rule matches only addresses outside the cluster, so this
+    # doesn't open 443 to other pods or nodes. Upstream Kubernetes semantics would
+    # include them; another CNI would need explicit excepts.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
