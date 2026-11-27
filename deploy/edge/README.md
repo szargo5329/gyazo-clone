@@ -49,7 +49,13 @@ Bump the CRDs chart and the Envoy Gateway chart together, always to the same ver
 1. The cluster is running and your IP is in the API server's authorized ranges (D-021).
 2. `deploy/manifests` is applied (namespace `gyazo`, api Service, network policy).
 3. Terraform created `pip-gyazo-dev` in `rg-gyazo-dev`, with the DNS label, and gave the
-   AKS control-plane identity Network Contributor on it (D-021).
+   AKS control-plane identity Network Contributor on it (D-021) **and** the custom role
+   `gyazo AKS public IP reader (dev)` at `rg-gyazo-dev` scope (D-029: the cloud provider
+   lists public IPs in that RG even when the IP is bound by name). Apply order:
+   `infra/bootstrap` apply (owner, local) → merge → CI apply of `infra/terraform/envs/dev`
+   (owner approves the `apply` gate) → only then the installs below. Check:
+   `az role assignment list --scope /subscriptions/<sub>/resourceGroups/rg-gyazo-dev --assignee <control-plane principal id> -o table`
+   (read-only) shows the reader role.
 4. **Owner approval**: steps 0-4 change the cluster and create an Azure load-balancer
    rule on the public IP (CLAUDE.md guardrails).
 5. **Before step 4 (public exposure):** CI has built the api image from the current
@@ -103,7 +109,7 @@ kubectl -n edge get gateway public
 az network public-ip show -g rg-gyazo-dev -n pip-gyazo-dev --query ipAddress -o tsv   # read-only; must match
 
 # If the Gateway has no address: the LoadBalancer Service events show whether the cloud
-# provider could use the PIP (the PIP-scoped Network Contributor grant, D-021)
+# provider could use the PIP (PIP-scoped Network Contributor, D-021; RG-scoped reader, D-029)
 kubectl -n envoy-gateway-system describe svc -l gateway.envoyproxy.io/owning-gateway-name=public
 
 # Routes and policies attached
@@ -144,11 +150,14 @@ OWNER_API_KEY=<key> PUBLIC_BASE_URL=https://$H uv run python scripts/smoke.py ht
 ## Troubleshooting
 - **Gateway has no address, Envoy Service stays `<pending>`:** run
   `kubectl -n envoy-gateway-system describe svc -l gateway.envoyproxy.io/owning-gateway-name=public`.
-  If the events show `403 AuthorizationFailed` on reading or listing public IPs in
-  `rg-gyazo-dev`, the PIP-scoped Network Contributor grant from D-021 is not enough for the
-  cloud provider. Widening it is an **owner IAM decision** (a Terraform change in
-  `modules/aks` + apply, reviewed against the D-021 review rule). Do not work around it
-  (no manual role assignment, no switching to an auto-created IP, which would lose the DNS label).
+  If the events show `403 AuthorizationFailed` on **listing** public IPs in `rg-gyazo-dev`
+  (`publicIPAddresses/read` at RG scope), the D-029 reader assignment is missing or hasn't
+  propagated: check that the bootstrap apply (role definition + ci-apply allowlist) and then
+  the main-env CI apply both ran, and allow a few minutes for propagation. A 403 on a
+  **write/join** of `pip-gyazo-dev` points at the PIP-scoped Network Contributor (D-021).
+  Any further widening is an **owner IAM decision** (a Terraform change in `modules/aks` +
+  apply, reviewed against the D-021/D-029 review rules). Do not work around it (no manual
+  role assignment, no switching to an auto-created IP, which would lose the DNS label).
 - **Certificate stuck pending:** `kubectl -n edge describe challenge`. A failing self-check
   usually means the http listener or the solver route isn't reachable from the cluster.
 
