@@ -120,6 +120,12 @@ Known gaps:
 | The early body-size check trusts `Content-Length`; a lying client is still cut off at cap+1 bytes in the route, but Starlette may spool up to the real body. | orchestrator | M3 (gateway request-size limit) |
 | No alerting on stuck jobs: a poison job retried about 2,300 times unnoticed (see lesson). Need an alert on queue message age / dequeue count. | orchestrator | M4 (SLO + alerts) |
 | No image retention policy: images are kept until teardown (storage soft-delete only). Screenshots often hold secrets, so decide how long images (and later overviews) live and enforce it (lifecycle rule or janitor). | orchestrator proposes, owner decides | M4 (janitor), and before M-AI stores any overview |
+| Egress allows TCP 443 to any host (D-027); no FQDN-level restriction. Exfiltration path if a pod is compromised. | orchestrator proposes, owner decides (cost) | M4 threat review (Cilium FQDN policy or firewall) |
+| Cilium CIDR semantics untested: confirm the 443 rule does not allow in-cluster traffic (curl from the api pod to another pod/node IP on 443 must fail). | orchestrator | First M3 deploy |
+| Image digests in `kustomization.yaml` are hand-pinned; confirm they exist in ACR (`az acr repository show`) and automate pinning. | orchestrator | Confirm at first apply; automate in M6 (ArgoCD) |
+| No `ephemeral-storage` requests/limits on containers (emptyDirs have `sizeLimit` only). | orchestrator | M5 (Helm chart) |
+| Label `app.kubernetes.io/managed-by: kustomize` becomes wrong when Helm takes over. | orchestrator | M5 |
+| Ingress to api admits every pod in `envoy-gateway-system`, not only the proxy pods. | orchestrator | When Envoy Gateway is installed (M3) |
 
 Lesson: the local compose stack had been running images built before the reviewer fixes landed, so a stale test job (fake id, no record) retried about 2,300 times over roughly a day and a half on the old worker. **Verified (compose log, 2026-11-23):** after `docker compose up -d --build`, the worker on `main` logged "no longer exists; dropping job" on the first pass and did not see the job again past the 60 s visibility window (the deleted-record path from D-020). Local stacks need a rebuild after pulling; `docs/local-dev.md` now says so.
 

@@ -275,3 +275,27 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - A required scan is a moving target: a newly published CVE or a Trivy DB outage can block unrelated PRs. Mitigation: a digest-bump PR, or a dated `.trivyignore` entry recorded here.
   - `ignore-unfixed` hides unfixed CVEs. A periodic full report is a known gap.
 - **Untested:** the whole workflow on GitHub runners (first PR run), and the push job (first `main` run; needs the D-024 bootstrap apply and the `push` environment's `AZURE_CLIENT_ID`).
+
+## D-027 First Kubernetes manifests: pod security, network policy, secret mount, image pins (M3) — Accepted
+- **Context:** M3 deploys the api and worker to AKS for the first time, as raw manifests applied with `kubectl apply -k deploy/manifests` (Helm replaces them in M5). The choices here become the baseline the Helm chart must keep.
+- **Decision:**
+  - **Pod Security Admission:** namespace `gyazo` enforces `restricted`, pinned to `v1.36` (the cluster's minor version); `audit` and `warn` use `latest`. Pods run as uid 10001, non-root, all capabilities dropped, read-only root filesystem, `RuntimeDefault` seccomp, `automountServiceAccountToken: false`.
+  - **NetworkPolicy:** default-deny ingress and egress in the namespace. Allows: ingress to api:8000 from `envoy-gateway-system` only; egress DNS to kube-dns; egress TCP 443 to `0.0.0.0/0` for api and worker (Storage, Entra token endpoint).
+  - **Owner API key:** Key Vault secret `owner-api-key` mounted as a **file** by the Secrets Store CSI add-on using the api workload identity. No `secretObjects`, so it is never synced to a Kubernetes Secret and never placed in an env var. The worker identity has no Key Vault access.
+  - **Images:** pinned by digest through kustomize `images:` (hand-pinned from build.yml run 45877215546; CI does not maintain them yet).
+  - **Guardrail change:** the owner allowlisted exactly `deploy/manifests/secretproviderclass.yaml` in `.claude/hooks/block_secrets.py`. The file names a secret and must never hold a value; gitleaks in CI is the backstop.
+- **Why:**
+  - Pinning `enforce` to a version stops a cluster upgrade from silently tightening the policy and rejecting pods mid-deploy; `warn`/`audit` at `latest` surface what the next version would reject first.
+  - Default-deny makes every allowed path explicit and reviewable. 443-anywhere is needed because Storage and Entra endpoints have no stable IP set; FQDN filtering needs a Cilium FQDN policy (Advanced Container Networking) or an egress firewall, both paid.
+  - A file mount keeps the secret out of `kubectl describe`, env dumps and etcd; rotation is picked up by the add-on (`secret_rotation_enabled`).
+  - Digests make the deployed bytes exactly the scanned bytes (D-026); a tag can be moved.
+- **Alternatives:**
+  - PSA `enforce: latest`: simpler, but an upgrade can break deploys.
+  - Env var from a synced Kubernetes Secret: common, but the value lands in etcd and process environments.
+  - Egress via Azure Firewall / Cilium FQDN rules: tighter, costs money; revisit if a later threat model needs it.
+  - Hook exception via a different filename (e.g. `spc-owner-key.yaml`): avoids touching the guardrail, but hides the file's purpose; the owner chose the explicit allowlist.
+- **Trade-offs / residual risk:**
+  - Pods can reach any host on 443 (data exfiltration path if the app is compromised). Plain HTTP, IMDS and other ports are blocked.
+  - The Cilium claim that a `0.0.0.0/0` CIDR rule excludes in-cluster endpoints is design-verified only; a negative test is a known gap.
+  - Digest pins are manual until CI/ArgoCD maintains them (M6).
+- **Untested:** server-side dry run, PSA admission and the CSI mount on the live cluster; all close at the first apply.
