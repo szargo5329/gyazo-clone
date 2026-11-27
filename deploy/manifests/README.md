@@ -11,7 +11,7 @@ M5, and ArgoCD applies it in M6.
 | `secretproviderclass.yaml` | SecretProviderClass `owner-api-key` (names the secret, holds no value; allowlisted in the `block_secrets` hook). Key Vault `owner-api-key` mounted as a file through the Secrets Store CSI add-on, as the api identity. Never synced to a Kubernetes Secret |
 | `api.yaml` | API Deployment (1 replica) + ClusterIP Service `api:80` → 8000 |
 | `worker.yaml` | Worker Deployment (1 replica, no Service, no probes; see the header comment) |
-| `networkpolicy.yaml` | Default deny in and out; API ingress only from `envoy-gateway-system`; egress DNS + TCP 443 |
+| `networkpolicy.yaml` | Default deny in and out; API ingress only from the Envoy proxy pods of Gateway `edge/public` (namespace `envoy-gateway-system` + proxy pod labels, `deploy/edge`); egress DNS + TCP 443 |
 | `kustomization.yaml` | File list, common labels, `images:` pinned by digest (hand-pinned now; CI later) |
 
 ## Prerequisites
@@ -50,7 +50,7 @@ that `PUBLIC_BASE_URL` is the public hostname, so links in responses point there
 when you test through port-forward. Set `PUBLIC_BASE_URL` for the smoke test, or its link check fails.
 
 ## Not here yet
-- Gateway (Envoy Gateway, HTTPRoute, rate limit), TLS (cert-manager): the rest of M3.
+- Gateway (Envoy Gateway, HTTPRoute, rate limit) and TLS (cert-manager): see `deploy/edge`.
 - Monitoring (ServiceMonitor, scrape network policy): M3 observability.
 - Digest pinning in CI (`kustomize edit set image`) and image scanning.
 - 2 API replicas + PodDisruptionBudget: when the node pool has room.
