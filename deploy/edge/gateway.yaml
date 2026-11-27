@@ -1,0 +1,100 @@
+# The public Gateway (D-008, D-011, D-028), its client-side limits, and the HTTP→HTTPS
+# redirect. All in namespace edge; the app's routes live in gyazo (routes.yaml).
+#
+# TLS: cert-manager's gateway-shim watches the annotation below and creates a Certificate
+# "gyazo-tls" in this namespace for the https listener's hostname. The Secret doesn't
+# exist until the first issuance succeeds; until then the https listener reports
+# ResolvedRefs=False and only the http listener (which serves the ACME challenge) works.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: public
+  namespace: edge
+  annotations:
+    # Start on staging (untrusted cert, generous rate limits). Switch to letsencrypt-prod
+    # exactly once, after staging issues cleanly: see README "Staging to production".
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+spec:
+  gatewayClassName: eg
+  listeners:
+    # Port 80 exists for two things only: the ACME HTTP-01 challenge and the redirect to
+    # HTTPS. Both routes live in this namespace (cert-manager creates the solver
+    # HTTPRoute next to the Certificate), so only routes from edge may attach.
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: gyazo-dev-px0x8.centralus.cloudapp.azure.com
+      allowedRoutes:
+        namespaces:
+          from: Same
+    # The application listener. Routes attach from the gyazo namespace only. A route in
+    # another namespace referencing this Gateway needs no ReferenceGrant; allowedRoutes is
+    # the Gateway owner's consent, and it is limited to gyazo here.
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: gyazo-dev-px0x8.centralus.cloudapp.azure.com
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: gyazo-tls # same namespace; written by cert-manager
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              kubernetes.io/metadata.name: gyazo
+---
+# Client-side (downstream) limits for every listener of the Gateway.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: public-client
+  namespace: edge
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: public
+  headers:
+    # Envoy's default is 60Ki. ShareX and the browser send well under 8Ki; 32Ki still
+    # leaves room for long cookies we don't set. Larger headers get 431.
+    maxRequestHeaderLimit: 32Ki
+  timeout:
+    http:
+      # Slow-header (slowloris-style) clients: the headers must arrive within 10 s of
+      # the first byte. Envoy has no default for this (disabled).
+      requestHeadersReceivedTimeout: 10s
+      # The whole request must arrive within 60 s. The largest legitimate request is a
+      # 10 MiB upload, which needs about 1.4 Mbit/s to finish in time; slower clients are
+      # cut off rather than holding a buffered upload in Envoy's memory indefinitely.
+      requestReceivedTimeout: 60s
+  # No clientIPDetection / xForwardedFor.numTrustedHops. With externalTrafficPolicy
+  # Local (gatewayclass.yaml) the TCP peer Envoy sees is the real client, so Envoy uses
+  # that address for rate limiting and appends it to X-Forwarded-For. Trusting any
+  # client-supplied X-Forwarded-For hop would let a client pick its own rate-limit key.
+---
+# Every plain-HTTP request is redirected to HTTPS with a 301, except the ACME challenge:
+# cert-manager's solver route matches the exact path /.well-known/acme-challenge/<token>,
+# and Gateway API gives an Exact path match precedence over this route's implicit
+# PathPrefix "/" across routes on the same listener, so the challenge is never redirected.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-to-https
+  namespace: edge
+spec:
+  parentRefs:
+    - name: public
+      sectionName: http
+  hostnames:
+    - gyazo-dev-px0x8.centralus.cloudapp.azure.com
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+            # No port: for scheme https the redirect uses the default 443, so Location
+            # carries no port.

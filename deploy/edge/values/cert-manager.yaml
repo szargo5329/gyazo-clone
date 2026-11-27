@@ -1,0 +1,68 @@
+# cert-manager (D-011, D-028).
+# Chart: oci://quay.io/jetstack/charts/cert-manager --version v1.21.3 (pinned in README.md).
+# Release: cert-manager, namespace cert-manager (created by deploy/edge/namespaces.yaml
+# first, with Pod Security "restricted" enforced).
+
+# cert-manager's own CRDs come with the chart. keep=true (the chart default, stated here)
+# adds helm.sh/resource-policy: keep, so `helm uninstall` leaves the CRDs in place. Deleting
+# a CRD deletes every object of that kind (the Certificate, both ClusterIssuers).
+crds:
+  enabled: true
+  keep: true
+
+global:
+  leaderElection:
+    # Chart default is kube-system. Keep cert-manager's leases (and the Role that lets it
+    # write them) in its own namespace instead of adding RBAC to kube-system.
+    namespace: cert-manager
+
+# Controller configuration file (replaces command-line flags).
+# gatewayAPI.enabled turns on the Gateway API integration: the gateway-shim that reads
+# the cert-manager.io/cluster-issuer annotation on Gateways, and the HTTP-01 solver that
+# creates an HTTPRoute (gatewayHTTPRoute in the ClusterIssuers). The
+# ExperimentalGatewayAPISupport feature gate it depends on is already on by default (beta).
+config:
+  apiVersion: controller.config.cert-manager.io/v1alpha1
+  kind: ControllerConfiguration
+  gatewayAPI:
+    enabled: true
+
+# Small explicit budgets (the chart leaves all of these empty). cert-manager is idle
+# except during issuance and renewal; one certificate in this cluster.
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+webhook:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+cainjector:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+# Post-install Helm hook Job that waits until the webhook answers.
+startupapicheck:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+# Security contexts: the chart defaults are already restricted-compatible for every
+# component (pod: runAsNonRoot, RuntimeDefault seccomp; container: no privilege
+# escalation, all capabilities dropped, read-only root filesystem), so they are not
+# repeated here. The cert-manager namespace enforces "restricted", which would reject
+# the pods at install if that ever changed.

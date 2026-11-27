@@ -1,0 +1,62 @@
+# GatewayClass "eg" and the EnvoyProxy settings for every proxy it creates (D-028).
+#
+# The EnvoyProxy lives in envoy-gateway-system, where the proxy pods and their
+# LoadBalancer Service are created. GatewayClass parametersRef must name a namespace.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: public-proxy
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: 1 # one node (D-021); a proxy restart is a short outage of the public endpoint
+        # No securityContext overrides. In v1.10.0 the controller starts both containers
+        # (envoy, shutdown-manager) from a hardened default and only merges overrides on
+        # top: uid/gid 65532, runAsNonRoot, no privilege escalation, all capabilities
+        # dropped, RuntimeDefault seccomp (internal/infrastructure/kubernetes/proxy/
+        # resource.go, expectedEnvoySecurityContext). Volumes are secret, configMap,
+        # projected and emptyDir. That should pass "restricted"; the namespace warns on
+        # restricted so the first install confirms it (namespaces.yaml).
+        container:
+          # Envoy holds every in-flight /upload body in memory (requestBuffer
+          # BufferAndLimit, up to about 10 MiB each, see policies.yaml). 512Mi leaves room
+          # for a few dozen concurrent uploads on top of the idle footprint. With a memory
+          # limit set, EG also configures Envoy's overload manager at 80% of it, so Envoy
+          # sheds load before the kernel OOM-kills it (proxy/resource.go, v1.10.0).
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      envoyService:
+        type: LoadBalancer
+        # Local is the Envoy Gateway default, stated explicitly: the Azure load balancer
+        # sends traffic only to nodes running a proxy pod, and the client's source IP is
+        # preserved (no SNAT to a node IP). The per-IP rate limit in policies.yaml depends
+        # on that. Cost: a node without a proxy pod fails the LB health probe, which is
+        # expected, not an outage.
+        externalTrafficPolicy: Local
+        annotations:
+          # Bind the pre-created static public IP by name (D-011, D-021). It lives in
+          # rg-gyazo-dev (Terraform, modules/network), not in the AKS node resource group,
+          # so the DNS label gyazo-dev-px0x8.centralus.cloudapp.azure.com survives cluster
+          # rebuilds. By name = one GET on the PIP, which the control-plane identity's
+          # PIP-scoped Network Contributor grant should cover (untested until first apply).
+          service.beta.kubernetes.io/azure-pip-name: pip-gyazo-dev
+          service.beta.kubernetes.io/azure-load-balancer-resource-group: rg-gyazo-dev
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller # matches values: config.envoyGateway.gateway.controllerName (chart default)
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: public-proxy
+    namespace: envoy-gateway-system
