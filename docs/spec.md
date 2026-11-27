@@ -121,8 +121,8 @@ Known gaps:
 | No alerting on stuck jobs: a poison job retried about 2,300 times unnoticed (see lesson). Need an alert on queue message age / dequeue count. | orchestrator | M4 (SLO + alerts) |
 | No image retention policy: images are kept until teardown (storage soft-delete only). Screenshots often hold secrets, so decide how long images (and later overviews) live and enforce it (lifecycle rule or janitor). | orchestrator proposes, owner decides | M4 (janitor), and before M-AI stores any overview |
 | Egress allows TCP 443 to any host (D-027); no FQDN-level restriction. Exfiltration path if a pod is compromised. | orchestrator proposes, owner decides (cost) | M4 threat review (Cilium FQDN policy or firewall) |
-| Cilium CIDR semantics untested: confirm the 443 rule does not allow in-cluster traffic (curl from the api pod to another pod/node IP on 443 must fail). | orchestrator | First M3 deploy |
-| Image digests in `kustomization.yaml` are hand-pinned; confirm they exist in ACR (`az acr repository show`) and automate pinning. | orchestrator | Confirm at first apply; automate in M6 (ArgoCD) |
+| Cilium CIDR semantics untested: confirm the 443 rule does not allow in-cluster traffic (curl from the api pod to another pod/node IP on 443 must fail). Not run at the first deploy. | orchestrator | M3 close (before the gateway goes public) |
+| Image digests in `kustomization.yaml` are hand-pinned; pinning is not automated. (Digests exist in ACR. **Verified:** both pods pulled them at the first apply on 2026-11-27.) | orchestrator | M6 (ArgoCD) |
 | No `ephemeral-storage` requests/limits on containers (emptyDirs have `sizeLimit` only). | orchestrator | M5 (Helm chart) |
 | Label `app.kubernetes.io/managed-by: kustomize` becomes wrong when Helm takes over. | orchestrator | M5 |
 | Ingress to api admits every pod in `envoy-gateway-system`, not only the proxy pods. | orchestrator | When Envoy Gateway is installed (M3) |

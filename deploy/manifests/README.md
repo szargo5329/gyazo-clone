@@ -43,11 +43,11 @@ kubectl -n gyazo logs deploy/api
 kubectl -n gyazo logs deploy/worker
 kubectl -n gyazo port-forward svc/api 8000:80
 curl -s localhost:8000/healthz; curl -s localhost:8000/readyz   # readyz = storage reachable as the api identity
-OWNER_API_KEY=<key> uv run python scripts/smoke.py http://localhost:8000
+OWNER_API_KEY=<key> PUBLIC_BASE_URL=https://gyazo-dev-px0x8.centralus.cloudapp.azure.com uv run python scripts/smoke.py http://localhost:8000
 ```
 Port-forward goes through the kubelet, so the network policy doesn't block it. Note
 that `PUBLIC_BASE_URL` is the public hostname, so links in responses point there even
-when you test through port-forward.
+when you test through port-forward. Set `PUBLIC_BASE_URL` for the smoke test, or its link check fails.
 
 ## Not here yet
 - Gateway (Envoy Gateway, HTTPRoute, rate limit), TLS (cert-manager): the rest of M3.

@@ -297,4 +297,4 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - Pods can reach any host on 443 (data exfiltration path if the app is compromised). Plain HTTP, IMDS and other ports are blocked.
   - The Cilium claim that a `0.0.0.0/0` CIDR rule excludes in-cluster endpoints is design-verified only; a negative test is a known gap.
   - Digest pins are manual until CI/ArgoCD maintains them (M6).
-- **Untested:** server-side dry run, PSA admission and the CSI mount on the live cluster; all close at the first apply.
+- **Verified (first apply, 2026-11-27, owner-approved):** `kubectl apply -k --dry-run=server` accepted all 11 resources (after the namespace existed), which covers PSA `restricted` admission. Rollout succeeded with 0 restarts, and `/readyz` returned 200, so the CSI mount, the workload-identity token and storage access all worked. `scripts/smoke.py` passed 15/15 through a port-forward. **Still untested:** the Cilium CIDR negative test (known gap).
