@@ -20,8 +20,8 @@ M5, and ArgoCD applies it in M6.
    `az keyvault secret set --vault-name kv-gyazo-dev-px0x8 --name owner-api-key --value <key>`.
    Without it the api pod stays in `ContainerCreating` with a CSI mount error.
 3. Images pushed to `acrgyazodevpx0x8.azurecr.io/gyazo-api` and `/gyazo-worker` and
-   pinned by digest in `kustomization.yaml` (currently from build.yml run 45877215546,
-   main commit 719ed24). To repin: `cd deploy/manifests && kustomize edit set image gyazo-api=acrgyazodevpx0x8.azurecr.io/gyazo-api@sha256:<digest>`
+   pinned by digest in `kustomization.yaml` (currently from build.yml run 46086388811,
+   main commit 24db8af). To repin: `cd deploy/manifests && kustomize edit set image gyazo-api=acrgyazodevpx0x8.azurecr.io/gyazo-api@sha256:<digest>`
    (and the same for `gyazo-worker`).
 4. Your IP is in the API server's authorized ranges (D-021).
 
