@@ -18,13 +18,13 @@ resources:
   - worker.yaml
   - networkpolicy.yaml
 
-# Digests from build.yml push run 45877215546 (main commit 719ed24), pinned by hand for
+# Digests from build.yml push run 46086388811 (main commit 24db8af), pinned by hand for
 # now. CI will maintain them later:
 #   kustomize edit set image gyazo-api=acrgyazodevpx0x8.azurecr.io/gyazo-api@sha256:...
 images:
   - name: gyazo-api
     newName: acrgyazodevpx0x8.azurecr.io/gyazo-api
-    digest: sha256:a68e4f9c24249c6576dd6fe43da9bec233a2e719ba2dfcdb03f235a4ed503790
+    digest: sha256:4d8947bfc662011503c7067ffe5177bc5291031f156b3cdd4a9aa59feecd3610
   - name: gyazo-worker
     newName: acrgyazodevpx0x8.azurecr.io/gyazo-worker
-    digest: sha256:1297931ccf4798f9c54fc20431e191ed5ab3da10acbb623cfbcb9647a5c15e91
+    digest: sha256:73698bcce8377c4f6b2cc7a4095f4bfb07185af095401ac9cf7c12a684724c36
