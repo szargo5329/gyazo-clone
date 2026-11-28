@@ -23,14 +23,30 @@ resource "azurerm_role_assignment" "control_plane_subnet" {
 
 # The gateway public IP lives outside the node resource group (D-011), so the
 # cloud provider needs explicit rights to attach it to the cluster load balancer.
-# Scoped to the IP itself. The gateway Service should reference it by name
-# (azure-pip-name annotation, a direct GET) rather than by IP (an RG list); see D-021 "Risks".
+# Scoped to the IP itself. This covers the write/join on the IP, but not the lookup:
+# referencing it by name (azure-pip-name) is NOT a direct GET. cloud-provider-azure
+# lists all public IPs in azure-load-balancer-resource-group and reads from that
+# per-RG cache either way, which needs the RG-scoped reader grant below (D-029).
 # Review rule (D-021): Network Contributor only for this UAMI, only at snet-aks/gateway-PIP scope; never RG scope, never api/worker (ABAC can't enforce below RG).
 resource "azurerm_role_assignment" "control_plane_gateway_pip" {
   scope                = var.gateway_public_ip_id
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_user_assigned_identity.control_plane.principal_id
   principal_type       = "ServicePrincipal"
+}
+
+# Read-only list/get of public IPs in the env RG, so the cloud provider can find the
+# gateway IP (D-029). Custom role defined in infra/bootstrap (roles.tf, aks_pip_reader)
+# and allowlisted for ci-apply there; looked up by name at apply time, so the bootstrap
+# apply must come first. Review rule (D-029): this custom role only for this UAMI, only
+# at RG scope (owner decision 2026-11-27; the "never RG scope" rule of D-021 still holds
+# for Network Contributor).
+resource "azurerm_role_assignment" "control_plane_pip_reader" {
+  scope                = var.resource_group_id
+  role_definition_name = "gyazo AKS public IP reader (${var.env})"
+  principal_id         = azurerm_user_assigned_identity.control_plane.principal_id
+  principal_type       = "ServicePrincipal"
+  description          = "AKS cloud provider: list/get public IPs in this env resource group to bind the gateway IP by name."
 }
 
 # Single source for the local-accounts setting, so the precondition on the cluster
@@ -161,10 +177,12 @@ resource "azurerm_kubernetes_cluster" "this" {
     }
   }
 
-  # The control plane needs both grants at create time (subnet join, PIP attach).
+  # The control plane needs these grants before it reconciles anything (subnet join,
+  # PIP lookup and attach).
   depends_on = [
     azurerm_role_assignment.control_plane_subnet,
     azurerm_role_assignment.control_plane_gateway_pip,
+    azurerm_role_assignment.control_plane_pip_reader,
   ]
 }
 

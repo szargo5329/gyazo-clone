@@ -1,5 +1,5 @@
-# API: FastAPI + built React UI (D-002), behind a ClusterIP Service. The M3 gateway
-# (Envoy Gateway, separate change) routes to it; until then use kubectl port-forward.
+# API: FastAPI + built React UI (D-002), behind a ClusterIP Service. The public Gateway
+# (Envoy Gateway, deploy/edge, D-028) routes to it; kubectl port-forward also works.
 #
 # Replicas: 1 for now. The system pool runs a single D2s_v6 node with about 750m CPU
 # unrequested after the AKS system pods (kubectl describe node, 2026-11-26), and the

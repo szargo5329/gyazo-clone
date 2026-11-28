@@ -75,6 +75,7 @@ module "aks" {
 
   env                  = var.env
   resource_group_name  = data.azurerm_resource_group.this.name
+  resource_group_id    = data.azurerm_resource_group.this.id
   location             = var.location
   tenant_id            = data.azurerm_client_config.current.tenant_id
   aks_subnet_id        = module.network.aks_subnet_id

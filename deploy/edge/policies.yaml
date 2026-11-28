@@ -1,0 +1,52 @@
+# Upload limits at the gateway (spec "Abuse limits", D-008, D-028). Field names checked
+# against the v1.10.0 CRD schema (gateway-crds-helm) and the translator source.
+# Scope: only the api-upload route (Exact /upload), today's single write path. A future
+# write route needs its own route and policy (see routes.yaml); it is not covered here.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: api-upload
+  namespace: gyazo # a policy must be in its target's namespace
+  labels:
+    app.kubernetes.io/name: gyazo-api
+    app.kubernetes.io/component: api
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: api-upload
+  # Maximum request body: 10304Ki = 10 MiB file cap + 64 KiB multipart overhead =
+  # 10,551,296 bytes, the same body_limit the API's upload_guard uses
+  # (app/api/gyazo_api/main.py: max_upload_bytes + 64 * 1024).
+  # BufferAndLimit: Envoy receives the whole body before sending anything upstream, so the
+  # limit holds without a trustworthy Content-Length (a chunked body is refused with 413
+  # once it passes the limit), and the API never sees a slow upload.
+  # Cost: each in-flight upload sits in Envoy's memory (up to about 10 MiB; see the
+  # EnvoyProxy memory limit in gatewayclass.yaml). The per-IP rate limit bounds that per
+  # client, not across many clients (D-028).
+  requestBuffer:
+    limit: 10304Ki
+    mode: BufferAndLimit
+  # Local (per-Envoy-pod) rate limits, no Redis. With one proxy replica, local = global.
+  # Over the limit: 429 with Retry-After and X-RateLimit-* headers (EG defaults).
+  rateLimit:
+    local:
+      rules:
+        # Per client IP: 10 requests per minute. Distinct = one bucket per source address
+        # inside 0.0.0.0/0 (the translator keeps up to 10,000 buckets per rule, LRU).
+        # The source address is the TCP peer (externalTrafficPolicy Local preserves it,
+        # and the ClientTrafficPolicy trusts no X-Forwarded-For hops), so a client can't
+        # pick its own key. IPv4 only, matching the IPv4-only public IP.
+        - clientSelectors:
+            - sourceCIDR:
+                type: Distinct
+                value: 0.0.0.0/0
+          limit:
+            requests: 10
+            unit: Minute
+        # No route-wide ceiling. A rule without clientSelectors becomes Envoy's default
+        # bucket, but EG v1.10 sets AlwaysConsumeDefaultTokenBucket=false
+        # (internal/xds/translator/local_ratelimit.go), so that bucket only counts
+        # requests matching no other rule, and every IPv4 client matches the rule above.
+        # A shared ceiling would need a second, non-Distinct sourceCIDR rule; left out
+        # until its interaction with the per-IP bucket is tested (D-028).

@@ -1,0 +1,60 @@
+# Application routes (D-028). In the gyazo namespace, next to the api Service, so the
+# backendRefs are same-namespace and need no ReferenceGrant. They attach to the https
+# listener of Gateway edge/public, which admits routes from gyazo only (gateway.yaml).
+#
+# Two routes to the same Service so that /upload can carry its own BackendTrafficPolicy
+# (policies.yaml): body-size limit and rate limit apply to uploads only, not to page
+# loads, /i/<id> redirects or the JSON API.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api
+  namespace: gyazo
+  labels:
+    app.kubernetes.io/name: gyazo-api
+    app.kubernetes.io/component: api
+spec:
+  parentRefs:
+    - name: public
+      namespace: edge
+      sectionName: https
+  hostnames:
+    - gyazo-dev-px0x8.centralus.cloudapp.azure.com
+  rules:
+    # No matches = PathPrefix "/": everything that isn't /upload. That includes /healthz
+    # and /readyz on purpose: they return only {"status": ...} with no error detail (the
+    # readiness failure is logged, not returned), see deploy/edge/README.md.
+    - backendRefs:
+        - name: api
+          port: 80
+---
+# Exact path /upload, every method. This is the app's only write path today. Any future
+# write route (or a renamed upload path) needs its own limited HTTPRoute + policy like this
+# one, or it falls through to the unlimited catch-all route. "/upload/" doesn't need one:
+# it never reaches the upload handler. The static-files mount at "/" answers it with 405
+# (checked with FastAPI's TestClient, 2026-11-27).
+# An Exact match takes precedence over the PathPrefix "/" route above. Matching all methods (not just POST) means a PUT or PATCH to /upload
+# can't sidestep the size and rate limits through the catch-all route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-upload
+  namespace: gyazo
+  labels:
+    app.kubernetes.io/name: gyazo-api
+    app.kubernetes.io/component: api
+spec:
+  parentRefs:
+    - name: public
+      namespace: edge
+      sectionName: https
+  hostnames:
+    - gyazo-dev-px0x8.centralus.cloudapp.azure.com
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /upload
+      backendRefs:
+        - name: api
+          port: 80

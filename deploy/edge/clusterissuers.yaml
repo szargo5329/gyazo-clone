@@ -1,0 +1,65 @@
+# Let's Encrypt issuers (D-011, D-028), ACME HTTP-01 solved through the public Gateway.
+#
+# Develop on staging (separate, generous limits; certificates are not browser-trusted).
+# Production is requested once, then the Secret gyazo-tls is kept: *.cloudapp.azure.com is
+# not on the Public Suffix List, so Let's Encrypt counts every certificate against the
+# registered domain azure.com (50 new certificates per week, shared with every Azure
+# customer using a cloudapp.azure.com name). See D-028 for the risk and fallback.
+#
+# No email. It is optional in cert-manager v1.21 (the ACME schema requires only server
+# and privateKeySecretRef), and Let's Encrypt no longer sends expiry emails. The owner may
+# add `email:` to both issuers if they want account notices; it must not be committed with
+# a personal address in a public repo.
+#
+# The ACME account private keys are written to Secrets in the cert-manager namespace
+# (letsencrypt-*-account). They are generated in-cluster and never leave it.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-account
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            # The solver HTTPRoute attaches to the http listener only.
+            parentRefs:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: public
+                namespace: edge
+                sectionName: http
+            # The cert-manager default is NodePort, which would open a port on every node
+            # for the challenge. Envoy routes to the solver's endpoints directly, so a
+            # ClusterIP Service is enough.
+            serviceType: ClusterIP
+            # No podTemplate: the solver pod (namespace edge, Pod Security "restricted")
+            # already runs with runAsNonRoot, RuntimeDefault seccomp, a read-only root,
+            # no privilege escalation and all capabilities dropped (cert-manager v1.21.3,
+            # pkg/issuer/acme/http/pod.go). A podTemplate securityContext would replace
+            # the pod-level defaults wholesale. Resources come from the controller's
+            # solver defaults (10m/64Mi requests, 100m/64Mi limits).
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod-account
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            # Same as letsencrypt-staging (YAML anchors cannot span documents).
+            parentRefs:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: public
+                namespace: edge
+                sectionName: http
+            serviceType: ClusterIP

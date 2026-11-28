@@ -35,4 +35,10 @@ ENV STATIC_DIR=/app/static
 RUN useradd --uid 10001 --no-create-home app
 USER 10001
 EXPOSE 8000
-CMD ["uvicorn", "gyazo_api.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# --proxy-headers: take the client address and scheme from X-Forwarded-For/-Proto, but only
+# when the TCP peer is in --forwarded-allow-ips. 10.244.0.0/16 is the AKS pod CIDR
+# (infra/terraform/modules/aks, var.pod_cidr), where the Envoy proxy pods connect from
+# (D-028). Every other peer's forwarded headers are ignored: under compose the peer is a
+# Docker bridge address, so locally the headers are simply not trusted, which is harmless.
+# uvicorn 0.54 accepts comma-separated IPs and CIDRs here.
+CMD ["uvicorn", "gyazo_api.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "10.244.0.0/16"]

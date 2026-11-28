@@ -190,6 +190,7 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
 - **Risks:**
   - Microsoft Learn says system pools should have ≥ 2 nodes for resilience. Min 1 conflicts with that guidance, and is accepted for cost. Upgrades surge to 2.
   - The PIP-scoped Network Contributor grant is **untested until the first gateway Service (M3)**; it is inferred, not verified. If the cloud provider looks the IP up by address (`azure-load-balancer-ipv4` + `azure-load-balancer-resource-group`), it may need to list public IPs at RG scope. Mitigation: reference the IP by name (`service.beta.kubernetes.io/azure-pip-name`, a direct GET) in the M3 gateway Service. If that still fails, a broader grant is a **new owner decision**: the review rule above forbids RG scope as-is.
+    - **Correction (2026-11-27):** referencing the IP by name is **not** a direct GET. In cloud-provider-azure release-1.36, `reconcilePublicIPs` lists public IPs in the PIP's resource group unconditionally, and `getPublicIPAddress` reads from a per-RG list cache, so the PIP-scoped grant alone would 403 on the list. Owner decision: the control-plane UAMI also gets a custom read-only role at RG scope (D-029). The Network Contributor review rule above is unchanged.
   - Encryption at host is off (checkov CKV_AZURE_227 skipped). It needs the `EncryptionAtHost` subscription feature registration, which is a subscription change. **Residual risk:** the node temp disk and caches (`emptyDir`, where uploads may buffer) are **not** host-encrypted. Only the managed OS disk has platform encryption.
 
 ## D-022 AI screenshot overview is core scope, after M4 — Accepted
@@ -297,4 +298,99 @@ Format: context → decision → alternatives → why. Status: Proposed / Accept
   - Pods can reach any host on 443 (data exfiltration path if the app is compromised). Plain HTTP, IMDS and other ports are blocked.
   - The Cilium claim that a `0.0.0.0/0` CIDR rule excludes in-cluster endpoints is design-verified only; a negative test is a known gap.
   - Digest pins are manual until CI/ArgoCD maintains them (M6).
-- **Verified (first apply, 2026-11-27, owner-approved):** `kubectl apply -k --dry-run=server` accepted all 11 resources (after the namespace existed), which covers PSA `restricted` admission. Rollout succeeded with 0 restarts, and `/readyz` returned 200, so the CSI mount, the workload-identity token and storage access all worked. `scripts/smoke.py` passed 15/15 through a port-forward. **Still untested:** the Cilium CIDR negative test (known gap).
+- **Verified (first apply, 2026-11-27, owner-approved):** `kubectl apply -k --dry-run=server` accepted all 11 resources (after the namespace existed), which covers PSA `restricted` admission. Rollout succeeded with 0 restarts, and `/readyz` returned 200, so the CSI mount, the workload-identity token and storage access all worked. `scripts/smoke.py` passed 15/15 through a port-forward. ~~**Still untested:** the Cilium CIDR negative test (known gap).~~ **Verified 2026-11-27** (negative test, see `docs/spec.md` M2 known gaps): in-cluster targets on 443 are dropped, blob storage connects.
+
+## D-028 Edge: Envoy Gateway v1.10.0 + cert-manager v1.21.3, upload limits at the gateway (M3) — Accepted (researched 2026-11-27)
+- **Context:** D-008 chose Gateway API with Envoy Gateway and cert-manager, and D-011 chose a public-IP DNS label with Let's Encrypt HTTP-01. M3 now has to make them concrete: versions, where each piece runs, and the exact policy YAML. Two M2 gaps belong here: the spec's rate limit on `/upload`, and a request-size limit that doesn't trust `Content-Length`. One M3 gap too: api ingress admitted every pod in `envoy-gateway-system`.
+- **Decision** (`deploy/edge`, install order and commands in its README):
+  - **Versions:**
+    - Envoy Gateway chart v1.10.0.
+    - CRDs from `gateway-crds-helm` v1.10.0 (Gateway API v1.6.1, **standard** channel, plus the Envoy Gateway CRDs). They are rendered with `helm template` and applied server-side, so no Helm release owns them; the controller chart runs with `crds.enabled=false`.
+    - cert-manager v1.21.3, with its CRDs from its chart (`keep`) and `config.gatewayAPI.enabled=true` through the chart's `ControllerConfiguration`.
+    - The AKS managed Gateway API is **not** enabled (CRD ownership, D-008).
+  - **Namespaces:** Pod Security enforce versions are pinned to v1.36 (D-027).
+    - `envoy-gateway-system` (controller and proxy pods): enforce baseline, warn/audit restricted.
+    - `cert-manager`: enforce restricted.
+    - `edge` (Gateway, TLS Secret, ACME solver): enforce restricted.
+  - **Proxy:**
+    - EnvoyProxy `public-proxy`, referenced from GatewayClass `eg`: 1 replica, requests 100m/256Mi, memory limit 512Mi. EG then sets Envoy's overload-manager heap limit to 80% of that.
+    - LoadBalancer Service bound **by name** to `pip-gyazo-dev` in `rg-gyazo-dev` (D-011, D-021).
+    - `externalTrafficPolicy: Local`, the EG default, stated explicitly. It preserves the client source IP, which the per-IP rate limit depends on.
+  - **Gateway `edge/public`:**
+    - Listener `http:80`: routes from `edge` only. It carries the 308 redirect to HTTPS (method-preserving; for browsers only, since API clients must use https so the key never crosses plain http) and cert-manager's solver route. The solver's Exact path match outranks the redirect's PathPrefix `/`.
+    - Listener `https:443`: routes from `gyazo` only. TLS terminates with Secret `gyazo-tls`, and the annotation `cert-manager.io/cluster-issuer: letsencrypt-staging` starts on staging.
+    - Both listeners are pinned to the hostname. No ReferenceGrant is needed: routes reference same-namespace Services, and the cross-namespace parentRef is allowed by `allowedRoutes`.
+  - **ClusterIssuers:** staging and prod, HTTP-01 through `gatewayHTTPRoute` (parentRef `public`, sectionName `http`).
+    - Solver Service is `ClusterIP`; the cert-manager default is NodePort.
+    - No `email`: it is optional in v1.21, and Let's Encrypt no longer sends expiry mail. The owner may add one; no personal address in the repo.
+  - **Upload limits** (BackendTrafficPolicy on a dedicated HTTPRoute `gyazo/api-upload`, exact path `/upload`, all methods):
+    - `requestBuffer` `limit: 10304Ki` (10 MiB + 64 KiB = 10,551,296 bytes, the API's own `body_limit`), `mode: BufferAndLimit`.
+    - Local rate limit: `sourceCIDR` `Distinct` `0.0.0.0/0`, 10 requests/minute per IP. EG v1.10 keeps up to 10,000 per-IP buckets (LRU).
+  - **Client limits** (ClientTrafficPolicy on the Gateway):
+    - `maxRequestHeaderLimit: 32Ki`.
+    - `requestHeadersReceivedTimeout: 10s` (slow headers).
+    - `requestReceivedTimeout: 60s` (a 10 MiB upload needs about 1.4 Mbit/s).
+    - No trusted `X-Forwarded-For` hops, so a client can't choose its own rate-limit key.
+  - **Network policy:** api ingress now needs namespace `envoy-gateway-system` **and** the proxy pod labels (`app.kubernetes.io/{name=envoy,component=proxy,managed-by=envoy-gateway}`, `gateway.envoyproxy.io/owning-gateway-{name=public,namespace=edge}`). These are the labels in the proxy Deployment's selector in v1.10.0, so they are stable.
+  - **App:** uvicorn gets `--forwarded-allow-ips 10.244.0.0/16` (the pod CIDR, D-021), so the client IP and scheme come from Envoy's headers. In 0.54.0, CIDRs are supported and the rightmost untrusted `X-Forwarded-For` entry wins. Under compose the peer is a Docker bridge address, so the headers are ignored locally, which is harmless.
+  - **Smaller choices:**
+    - Envoy Gateway topology-injector webhook disabled: the node pool has no zones, and it is one less webhook in the way of the nightly stop.
+    - cert-manager leader election moved from `kube-system` to `cert-manager`.
+    - Controllers get explicit small requests (EG 50m/256Mi; cert-manager components 10m/32-64Mi) with memory limits and no CPU limits.
+- **Alternatives:**
+  - **AKS application routing add-on with Gateway API** (GA, managed, Istio-based): the fallback. Per the researcher (2026-11-27), it can't configure request body size limits or rate limiting, which are the two things this slice exists for, and it runs heavier always-on pods (D-008).
+  - **Istio add-on + EnvoyFilter:** limits are possible, but through raw Envoy config patches that are unsupported, fragile across upgrades and heavier to run.
+  - **Envoy Gateway v1.9.4:** the fallback if v1.10.0 shows a regression. Same API for everything used here.
+  - **Limits only in the app** (as in M2): the app can't refuse a body it is already receiving, and it can't rate-limit across restarts or replicas cheaply.
+  - **A route-wide upload ceiling** as a selector-less rule: dropped. EG sets `AlwaysConsumeDefaultTokenBucket=false`, so that bucket only counts requests that match no other rule, and with the per-IP rule in place it would never count.
+- **Why:** Gateway API is the current standard, and Envoy Gateway is its reference-style implementation. Both limits are first-class CRD fields here, not patches. Running cert-manager in-cluster keeps TLS free and automatic with no domain purchase (D-011).
+- **Risks:**
+  - **Let's Encrypt limits:** `cloudapp.azure.com` is **not** on the Public Suffix List, so certificates count against `azure.com`: 50 per week, shared with every Azure customer. Mitigation: staging first, production requested once, then the Secret is kept (README "Staging to production"). Fallback: own domain + Azure DNS zone (D-011).
+  - **PIP binding by name** depends on the PIP-scoped Network Contributor grant plus the RG-scoped public IP reader role (D-029, added 2026-11-27 after the code-path check). Untested until the first Gateway Service.
+  - **Pod Security of the generated pods:** EG proxy and ACME solver pods are generated by controllers, so we don't write their specs.
+    - Proxy: restricted-compatible per the v1.10.0 source, and admitted locally with no restricted warnings. Not seen on AKS yet, so `envoy-gateway-system` stays enforce baseline until the AKS install shows no warnings.
+    - Solver: restricted-compatible per the cert-manager v1.21.3 source. Not run anywhere yet.
+  - **`BufferAndLimit` buffers whole uploads in Envoy memory.** The per-IP limit bounds each client, not the total; many addresses at once could push Envoy into overload shedding (heap limit at 80% of 512Mi). Accepted for a demo.
+  - **Client IP / rate-limit key:** this relies on Azure LB + `externalTrafficPolicy: Local` preserving the source IP. Needs a live test (the api log shows a public IP; 11 quick requests get a 429).
+  - **Nightly stop:** cert-manager's webhook (`failurePolicy: Fail`, cert-manager resources only) vs `az aks stop` (D-025) is untested.
+  - **Chart images:** pinned by tag through the chart version, not by digest.
+  - **One proxy replica:** a proxy restart is a short public outage.
+- **Evidence (2026-11-27):**
+  - **Verified (local k3s v1.34 in Docker, throwaway, no cloud):**
+    - The README install steps 0-4 ran as written. cert-manager pods were admitted under enforced `restricted`.
+    - `kubectl apply -k deploy/edge --dry-run=server` and the apply passed CRD schema, CEL and cert-manager webhook validation.
+    - Envoy Gateway reported GatewayClass Accepted, both listeners Programmed/ResolvedRefs, all three routes Accepted, and both policies Accepted.
+    - The proxy pod carried exactly the NetworkPolicy labels, and its Service had `externalTrafficPolicy: Local` and both Azure annotations.
+    - Through the proxy (in-cluster client, self-signed cert, stub backend):
+      - 10,551,296 bytes → 200; one byte more → 413, also with chunked encoding and with PUT; other paths are not limited.
+      - 12 requests to `/upload` → 10×200 then 429 with `retry-after`.
+      - HTTP → 301 to `https://<host>/...` (tested with 301; changed to 308 after review, schema-validated, not re-run end to end).
+      - Envoy appended the real peer to a client-supplied `X-Forwarded-For`.
+      - A non-proxy pod in `envoy-gateway-system` was refused by the api NetworkPolicy.
+    - The cert-manager controller was scaled to 0 for the test, so no ACME traffic was sent.
+  - **Verified (live AKS, read-only):** no Gateway API or cert-manager CRDs exist yet. `kubectl apply -k deploy/manifests --dry-run=server` accepted the tightened NetworkPolicy (the only diff is the added podSelector). The three namespaces pass a server dry run.
+  - **Verified (local Docker):** the api image builds; uvicorn 0.54.0 in it trusts 10.244.x.x and not 172.17.0.1 or the node subnet, and it parses the CMD.
+  - **Untested:** everything on AKS (PIP binding, the real ACME issuance, Cilium enforcing the label selector, source-IP preservation through the Azure LB, Pod Security on AKS, stop/start). The new api image needs a CI build and a digest repin in `deploy/manifests/kustomization.yaml` before `--forwarded-allow-ips` is live.
+
+## D-029 Control-plane identity: custom public-IP reader at RG scope — Accepted (owner decision 2026-11-27)
+- **Context:** D-021 granted the AKS control-plane UAMI Network Contributor on the gateway public IP only, assuming that binding the IP by name (`service.beta.kubernetes.io/azure-pip-name`) is a direct GET. Reading the cloud-provider-azure source (release-1.36) shows otherwise:
+  - `reconcilePublicIPs` (`pkg/provider/azure_loadbalancer.go`) calls `listPIP` on the PIP resource group (`azure-load-balancer-resource-group`, here `rg-gyazo-dev`) unconditionally.
+  - `getPublicIPAddress` (`pkg/provider/azure_publicip_repo.go`) reads from a per-resource-group list cache, so even the by-name lookup is a LIST.
+  - A LIST at RG scope needs `Microsoft.Network/publicIPAddresses/read` at RG scope; a grant on the IP itself doesn't cover it, so the gateway Service would stay `<pending>` with a 403.
+  - Sources: the two source files above (raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/release-1.36/...), learn.microsoft.com/azure/aks/static-ip, cloud-provider-azure.sigs.k8s.io/topics/azure-permissions/.
+- **Decision:**
+  - `infra/bootstrap` defines custom role **`gyazo AKS public IP reader (<env>)`**, defined and assignable only at `rg-gyazo-<env>`, with exactly one action: `Microsoft.Network/publicIPAddresses/read`. Its GUID is added to the ci-apply ABAC allowlist (same pattern as the built-in roles).
+  - `modules/aks` assigns it to the control-plane UAMI at `rg-gyazo-<env>` scope (`control_plane_pip_reader`, looked up by role name at apply time). The PIP-scoped Network Contributor stays; the write/join side is unchanged.
+  - **Review rule relaxation:** D-021's "never RG scope" is relaxed **for this one read-only custom role only**, by owner decision. Review rule: assign it only to the AKS control-plane UAMI, only at RG scope. Network Contributor stays PIP/subnet-scoped.
+- **Alternatives:**
+  - Built-in **Reader** at RG: reads every resource in the RG (storage, Key Vault, registry configuration), far more than one action.
+  - **Network Contributor** at RG: could modify the VNet, subnets and NSGs.
+  - **Move the PIP into the node RG** (`MC_*`), where AKS grants itself rights: the IP and its DNS label are lost on every cluster rebuild (D-011).
+  - Let AKS create the IP: same loss of the stable hostname.
+- **Why:** the narrowest grant that matches the actual code path: one read action, one RG, one identity, no write.
+- **Risks / limits:**
+  - The UAMI can read every public IP in `rg-gyazo-<env>` (today only `pip-gyazo-<env>`; the AKS outbound IP lives in the node RG). Read-only, so it can't modify or delete any of them. The cloud provider only deletes PIPs it created and tagged as its own; Terraform's `pip-gyazo-<env>` isn't one, and Network Contributor still covers only that IP.
+  - **ABAC can't pin the assignee:** the condition allowlists roles, not (role, principal) pairs, and the control-plane UAMI is created by the main config, so its principal ID isn't known to bootstrap and changes on rebuild. ci-apply could therefore assign this read-only role to any non-CI service principal in the RG. Enforced by review instead (rule above). Impact is limited to reading public IP metadata.
+  - **Apply order:** bootstrap apply (owner, local) → merge → CI apply of the main env (owner approves the `apply` gate) → edge installs (`deploy/edge`). If the main env is applied first, only the new assignment fails (`role definition not found`); nothing else changes.
+  - A brand-new custom role can briefly fail its first assignment with `RoleDefinitionDoesNotExist` (propagation); re-run the apply.
+- **Status:** **design-verified** (source read, `terraform plan` of both roots on 2026-11-27: bootstrap 1 add + 1 in-place condition update, main env 1 add). Becomes **verified** when the first gateway LoadBalancer Service gets `pip-gyazo-dev` as its address with no 403 in the Service events.

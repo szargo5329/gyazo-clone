@@ -1,0 +1,47 @@
+# Envoy Gateway control plane (D-008, D-028).
+# Chart: oci://docker.io/envoyproxy/gateway-helm --version v1.10.0 (pinned in README.md).
+# Release: envoy-gateway, namespace envoy-gateway-system (created by deploy/edge/namespaces.yaml
+# first, so the Pod Security labels exist before any pod is admitted).
+#
+# This only configures the controller. The Envoy proxy pods it creates are configured by
+# the EnvoyProxy resource in deploy/edge/gatewayclass.yaml.
+
+# CRDs (Gateway API standard channel + Envoy Gateway) are installed separately from
+# gateway-crds-helm v1.10.0 with server-side apply (README step 1), so the chart doesn't
+# own them and a `helm uninstall` can't delete every Gateway and route with them.
+crds:
+  enabled: false
+
+deployment:
+  envoyGateway:
+    # Chart default is 100m / 256Mi, limit 1024Mi. CPU is the scarce resource on the
+    # single D2s_v6 node (about 750m unrequested after the AKS system pods, D-021), and the
+    # controller is idle between config changes, so request half the default CPU. Memory
+    # stays at the default request; the limit is halved (one Gateway, a handful of routes).
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    # The chart's container securityContext is already restricted-compatible
+    # (non-root 65532, no privilege escalation, all capabilities dropped, read-only root,
+    # RuntimeDefault seccomp); not repeated here.
+
+# The topology injector is a mutating webhook (pods/binding, failurePolicy Ignore) that
+# copies the node's zone label onto proxy pods for zone-aware routing. The node pool has
+# no zones (D-021), so it does nothing useful here, and every webhook is one more thing
+# that can get in the way of the nightly stop/start (D-025).
+topologyInjector:
+  enabled: false
+
+# certgen runs once per install/upgrade as a Job to create the control plane's xDS TLS
+# certificates. The chart leaves its resources empty; give it a small explicit budget.
+certgen:
+  job:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi

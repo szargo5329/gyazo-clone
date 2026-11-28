@@ -1,0 +1,20 @@
+# Edge configuration (D-028): kubectl apply -k deploy/edge
+# Needs the Gateway API + Envoy Gateway CRDs and cert-manager installed first (README.md
+# steps 1-3); values/ holds the Helm values for those installs and is not part of this
+# kustomization.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: gyazo-clone
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+
+resources:
+  - namespaces.yaml
+  - gatewayclass.yaml
+  - gateway.yaml
+  - clusterissuers.yaml
+  - routes.yaml
+  - policies.yaml

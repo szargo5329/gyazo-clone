@@ -1,7 +1,7 @@
 # Network policy for the gyazo namespace, enforced by Cilium (D-021).
 #
-# Ingress: default deny. Only the API takes traffic, on 8000, and only from the gateway
-# namespace. Kubelet probes and kubectl port-forward aren't blocked (they come from the
+# Ingress: default deny. Only the API takes traffic, on 8000, and only from the gateway's
+# Envoy proxy pods. Kubelet probes and kubectl port-forward aren't blocked (they come from the
 # node, which Cilium allows by default).
 #
 # Egress: default deny too, then two allows:
@@ -36,13 +36,25 @@ spec:
       app.kubernetes.io/name: gyazo-api
   policyTypes: ["Ingress"]
   ingress:
-    # For the M3 gateway: Envoy Gateway runs its proxy pods in its own namespace by
-    # default. Nothing matches until that namespace exists, so nothing reaches the API
-    # except port-forward. Prometheus scraping gets its own rule with monitoring.
+    # Only the Envoy proxy pods of Gateway edge/public (deploy/edge, D-028). Envoy Gateway
+    # runs them in its own namespace (default "controller namespace" mode), not in edge.
+    # The pod labels are the ones Envoy Gateway v1.10 puts in the proxy Deployment's
+    # selector (app.kubernetes.io/* from EnvoyAppLabel, plus the owning-gateway labels),
+    # so they are stable across proxy restarts and upgrades. This excludes the Envoy
+    # Gateway controller, its certgen Job and any other Gateway's proxies.
+    # namespaceSelector and podSelector are in the same list item, so both must match.
+    # Prometheus scraping gets its own rule with monitoring.
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: envoy-gateway-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: envoy
+              app.kubernetes.io/component: proxy
+              app.kubernetes.io/managed-by: envoy-gateway
+              gateway.envoyproxy.io/owning-gateway-name: public
+              gateway.envoyproxy.io/owning-gateway-namespace: edge
       ports:
         - protocol: TCP
           port: 8000
